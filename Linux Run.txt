@@ -1,0 +1,12 @@
+git clone <repo> servermanager && cd servermanager
+cp .env.example .env
+# Edit .env: SECRET_KEY, PUBLIC_API_URL (e.g. https://manager.yourdomain.com)
+docker compose up -d
+docker compose exec backend python -m scripts.create_admin --username admin --password 'YourPassword' --email admin@example.com
+# Open http://YOUR_SERVER_IP:3000/login
+
+docker compose down
+docker compose up -d
+
+sudo systemctl status ssh
+sudo ufw allow from 172.17.0.0/16 to any port 22

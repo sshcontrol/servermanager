@@ -1,0 +1,53 @@
+# Environment and secrets
+.env
+*.env.local
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Node / Frontend
+node_modules/
+frontend/dist/
+frontend/build/
+*.tsbuildinfo
+
+# Docker
+docker-compose.override.yml
+
+# OS
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Debug / logs
+*.log
+.cursor/debug.log
+
+# Backups (may contain sensitive data)
+*.encrypted
+
+# SSH keys (never commit private keys)
+*.pem
+*.ppk
+id_rsa
+id_ed25519
