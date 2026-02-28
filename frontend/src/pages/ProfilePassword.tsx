@@ -1,5 +1,7 @@
 import { useState } from "react";
 import { api } from "../api/client";
+import { validatePassword } from "../utils/password";
+import PasswordField from "../components/PasswordField";
 
 export default function ProfilePassword() {
   const [currentPassword, setCurrentPassword] = useState("");
@@ -11,8 +13,9 @@ export default function ProfilePassword() {
   const changePassword = async (e: React.FormEvent) => {
     e.preventDefault();
     setMessage(null);
-    if (newPassword.length < 8) {
-      setMessage({ type: "error", text: "New password must be at least 8 characters." });
+    const pwdErr = validatePassword(newPassword);
+    if (pwdErr) {
+      setMessage({ type: "error", text: pwdErr });
       return;
     }
     if (newPassword !== confirmPassword) {
@@ -43,10 +46,13 @@ export default function ProfilePassword() {
             <label htmlFor="current-password">Current password</label>
             <input id="current-password" type="password" value={currentPassword} onChange={(e) => setCurrentPassword(e.target.value)} required autoComplete="current-password" />
           </div>
-          <div className="form-group">
-            <label htmlFor="new-password">New password</label>
-            <input id="new-password" type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} required minLength={8} autoComplete="new-password" />
-          </div>
+          <PasswordField
+            id="new-password"
+            value={newPassword}
+            onChange={setNewPassword}
+            label="New password"
+            placeholder="Enter new password"
+          />
           <div className="form-group">
             <label htmlFor="confirm-password">Confirm new password</label>
             <input id="confirm-password" type="password" value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} required minLength={8} autoComplete="new-password" />

@@ -1,26 +1,143 @@
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Link } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
 import { APP_VERSION } from "../version";
 import Logo from "../components/Logo";
 import "./Login.css";
 
+const API_BASE = import.meta.env.VITE_API_URL || "";
+
+declare global {
+  interface Window {
+    grecaptcha?: {
+      getResponse: () => string;
+      reset: () => void;
+      render: (container: HTMLElement, params: { sitekey: string; theme?: string }) => number;
+    };
+  }
+}
+
 export default function Login() {
   const { login } = useAuth();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [totpCode, setTotpCode] = useState("");
+  const [smsCode, setSmsCode] = useState("");
+  const [pendingToken, setPendingToken] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [recaptchaSiteKey, setRecaptchaSiteKey] = useState<string | null>(null);
+  const [googleOAuthEnabled, setGoogleOAuthEnabled] = useState(false);
+  const recaptchaRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    fetch(`${API_BASE}/api/public/platform-settings`)
+      .then((r) => (r.ok ? r.json() : {}))
+      .then((s: { recaptcha_site_key?: string; google_oauth_client_id?: string }) => {
+        const key = s?.recaptcha_site_key?.trim();
+        if (key) setRecaptchaSiteKey(key);
+        setGoogleOAuthEnabled(!!s?.google_oauth_client_id?.trim());
+      })
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    // HashRouter: query is in hash (#/login?error=...), not window.location.search
+    const hash = window.location.hash || "";
+    const qIdx = hash.indexOf("?");
+    const search = qIdx >= 0 ? hash.slice(qIdx) : window.location.search;
+    const params = new URLSearchParams(search);
+    const err = params.get("error");
+    if (err) setError(decodeURIComponent(err || ""));
+  }, []);
+
+  useEffect(() => {
+    if (!recaptchaSiteKey || !recaptchaRef.current) return;
+    const siteKey = recaptchaSiteKey;
+    const container = recaptchaRef.current;
+    const renderWidget = () => {
+      if (window.grecaptcha && container) {
+        try {
+          window.grecaptcha.render(container, {
+            sitekey: siteKey,
+            theme: "dark",
+          });
+        } catch {}
+      }
+    };
+    if (typeof window.grecaptcha !== "undefined") {
+      renderWidget();
+      return;
+    }
+    const cbName = "___recaptchaLoginCb";
+    (window as unknown as Record<string, unknown>)[cbName] = renderWidget;
+    const script = document.createElement("script");
+    script.src = `https://www.google.com/recaptcha/api.js?onload=${cbName}&render=explicit`;
+    script.async = true;
+    document.head.appendChild(script);
+    return () => {
+      delete (window as unknown as Record<string, unknown>)[cbName];
+    };
+  }, [recaptchaSiteKey]);
+
+  const isRecaptchaWidgetRendered = () =>
+    recaptchaRef.current?.querySelector("iframe") != null;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
     setLoading(true);
+    if (pendingToken && smsCode.length < 4) {
+      setError("Enter the 4-digit code from your phone");
+      setLoading(false);
+      return;
+    }
     try {
-      await login(username, password, totpCode || undefined);
+      let recaptchaToken: string | undefined;
+      if (!pendingToken && recaptchaSiteKey && window.grecaptcha) {
+        recaptchaToken = window.grecaptcha.getResponse();
+        if (!recaptchaToken) {
+          if (!isRecaptchaWidgetRendered()) {
+            setError(
+              "Captcha could not load. Please refresh the page. If you're on localhost or a custom domain, add it in Google reCAPTCHA admin."
+            );
+          } else {
+            setError("Please complete the captcha verification");
+          }
+          setLoading(false);
+          return;
+        }
+      }
+      await login(
+        username,
+        password,
+        totpCode || undefined,
+        recaptchaToken,
+        pendingToken ? { pendingToken, smsCode } : undefined
+      );
+      if (recaptchaSiteKey && window.grecaptcha) window.grecaptcha.reset();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Login failed");
+      const smsErr = err as { requiresSms?: boolean; pendingToken?: string };
+      if (smsErr.requiresSms && smsErr.pendingToken) {
+        setPendingToken(smsErr.pendingToken);
+        setSmsCode("");
+        setError("");
+        setLoading(false);
+        return;
+      }
+      const msg = err instanceof Error ? err.message : "Login failed";
+      if (
+        recaptchaSiteKey &&
+        (msg.includes("captcha") || msg.includes("Captcha")) &&
+        !isRecaptchaWidgetRendered()
+      ) {
+        setError(
+          "Captcha could not load. Please refresh the page. If you're on localhost or a custom domain, add it in Google reCAPTCHA admin."
+        );
+      } else {
+        setError(msg);
+      }
+      if (recaptchaSiteKey && window.grecaptcha) window.grecaptcha.reset();
     } finally {
       setLoading(false);
     }
@@ -62,31 +179,64 @@ export default function Login() {
                 placeholder="Enter password"
               />
             </div>
-            <div className="form-group">
-              <label htmlFor="totp">TOTP code <span className="login-optional">(if 2FA enabled)</span></label>
-              <input
-                id="totp"
-                type="text"
-                value={totpCode}
-                onChange={(e) => setTotpCode(e.target.value)}
-                placeholder=""
-                maxLength={6}
-                autoComplete="one-time-code"
-              />
-            </div>
-            <div className="form-group">
-              <label htmlFor="sms-code">SMS verification <span className="login-optional">(coming soon)</span></label>
-              <input
-                id="sms-code"
-                type="text"
-                placeholder="SMS code"
-                disabled
-                readOnly
-                aria-disabled="true"
-                title="SMS verification will be available in a future update"
-              />
-            </div>
+            {!pendingToken && (
+              <div className="form-group">
+                <label htmlFor="totp">2FA Code <span className="login-optional">(if enabled)</span></label>
+                <input
+                  id="totp"
+                  type="text"
+                  value={totpCode}
+                  onChange={(e) => setTotpCode(e.target.value)}
+                  placeholder=""
+                  maxLength={6}
+                  autoComplete="one-time-code"
+                />
+              </div>
+            )}
+            {pendingToken && (
+              <div className="form-group">
+                <label htmlFor="sms">SMS verification code</label>
+                <input
+                  id="sms"
+                  type="text"
+                  value={smsCode}
+                  onChange={(e) => setSmsCode(e.target.value.replace(/\D/g, "").slice(0, 8))}
+                  placeholder="0000"
+                  maxLength={8}
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                />
+                <p style={{ fontSize: "0.85rem", color: "var(--text-muted)", marginTop: "0.25rem" }}>
+                  Enter the 4-digit code sent to your phone.
+                </p>
+              </div>
+            )}
+            {recaptchaSiteKey && (
+              <div className="form-group">
+                <div ref={recaptchaRef} className="login-recaptcha" />
+              </div>
+            )}
             {error && <p className="error-msg login-error">{error}</p>}
+            {googleOAuthEnabled && (
+              <>
+                <div className="form-group">
+                  <a
+                    href={`${API_BASE || ""}/api/auth/google?mode=login`}
+                    className="login-google-btn"
+                    style={{
+                      display: "flex", alignItems: "center", justifyContent: "center", gap: "0.5rem",
+                      padding: "0.75rem 1rem", borderRadius: 8, border: "1px solid rgba(255,255,255,0.2)",
+                      background: "rgba(255,255,255,0.05)", color: "inherit", textDecoration: "none",
+                      fontSize: "0.95rem", fontWeight: 500, cursor: "pointer", width: "100%",
+                    }}
+                  >
+                    <svg width="18" height="18" viewBox="0 0 24 24"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>
+                    Sign in with Google
+                  </a>
+                </div>
+                <div style={{ textAlign: "center", padding: "0.5rem 0", fontSize: "0.85rem", color: "var(--text-muted)" }}>— or —</div>
+              </>
+            )}
             <button
               type="submit"
               className="primary login-submit"
@@ -97,9 +247,9 @@ export default function Login() {
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" x2="3" y1="12" y2="12"/></svg>
               </span>
             </button>
-            <div style={{ display: "flex", justifyContent: "space-between", marginTop: "1rem", fontSize: "0.875rem" }}>
-              <Link to="/forgot-password" style={{ color: "var(--accent, #2dd4bf)", textDecoration: "none" }}>Forgot password?</Link>
-              <Link to="/signup" style={{ color: "var(--accent, #2dd4bf)", textDecoration: "none" }}>Create account</Link>
+            <div className="login-form-links">
+              <Link to="/forgot-password">Forgot password?</Link>
+              <Link to="/signup">Create account</Link>
             </div>
           </form>
         </div>

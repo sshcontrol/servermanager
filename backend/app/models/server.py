@@ -1,12 +1,7 @@
 from sqlalchemy import Column, String, Text, DateTime, ForeignKey
 from sqlalchemy.orm import relationship
 from app.database import Base
-from app.models.user import utcnow_naive
-import uuid
-
-
-def generate_uuid():
-    return str(uuid.uuid4())
+from app.models.utils import generate_uuid, utcnow_naive
 
 
 class Server(Base):

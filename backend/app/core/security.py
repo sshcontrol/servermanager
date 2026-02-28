@@ -10,6 +10,23 @@ settings = get_settings()
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 
+PASSWORD_MIN_LENGTH = 8
+PASSWORD_REQUIRE_UPPERCASE = True
+PASSWORD_REQUIRE_SYMBOL = True
+# Symbols: common punctuation and special chars
+PASSWORD_SYMBOLS = "!@#$%^&*()_+-=[]{}|;:'\",.<>?/~`"
+
+
+def validate_password_strength(password: str) -> None:
+    """Validate password meets requirements. Raises ValueError with message if not."""
+    if len(password) < PASSWORD_MIN_LENGTH:
+        raise ValueError("Password must be at least 8 characters")
+    if PASSWORD_REQUIRE_UPPERCASE and not any(c.isupper() for c in password):
+        raise ValueError("Password must contain at least one uppercase letter")
+    if PASSWORD_REQUIRE_SYMBOL and not any(c in PASSWORD_SYMBOLS for c in password):
+        raise ValueError("Password must contain at least one symbol (e.g. !@#$%^&*)")
+
+
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     return pwd_context.verify(plain_password, hashed_password)
 
@@ -41,6 +58,30 @@ def create_destructive_verification_token(user_id: str, action: str, target_id: 
         "type": "destructive_verify",
         "action": action,
         "target_id": target_id,
+    }
+    return jwt.encode(to_encode, settings.secret_key, algorithm=settings.jwt_algorithm)
+
+
+def create_login_sms_pending_token(user_id: str, token_id: str) -> str:
+    """Short-lived token (5 min) for login SMS verification step."""
+    expire = datetime.now(timezone.utc) + timedelta(minutes=5)
+    to_encode = {
+        "exp": int(expire.timestamp()),
+        "sub": str(user_id),
+        "type": "login_sms_pending",
+        "jti": token_id,
+    }
+    return jwt.encode(to_encode, settings.secret_key, algorithm=settings.jwt_algorithm)
+
+
+def create_account_closure_sms_pending_token(user_id: str, token_id: str) -> str:
+    """Short-lived token (5 min) for account closure SMS verification step."""
+    expire = datetime.now(timezone.utc) + timedelta(minutes=5)
+    to_encode = {
+        "exp": int(expire.timestamp()),
+        "sub": str(user_id),
+        "type": "account_closure_sms_pending",
+        "jti": token_id,
     }
     return jwt.encode(to_encode, settings.secret_key, algorithm=settings.jwt_algorithm)
 

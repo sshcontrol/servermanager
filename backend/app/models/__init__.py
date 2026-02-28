@@ -1,4 +1,4 @@
-from app.models.tenant import Tenant, Plan, Subscription, EmailVerificationToken, PasswordResetToken, UserInvitation
+from app.models.tenant import Tenant, Plan, Subscription, EmailVerificationToken, PasswordResetToken, UserInvitation, DestructiveVerificationToken, PhoneVerificationToken, AccountClosureToken
 from app.models.email_settings import EmailSettings, EmailTemplate
 from app.models.user import User
 from app.models.role import Role, Permission
@@ -11,6 +11,11 @@ from app.models.user_group import UserGroup, ServerUserGroupAccess, user_group_m
 from app.models.deployment import DeploymentToken
 from app.models.audit_log import AuditLog
 from app.models.security import IpWhitelistSettings, IpWhitelistEntry
+from app.models.platform_settings import PlatformSettings
+from app.models.notification import Notification
+from app.models.payment import PaymentTransaction
+from app.models.smpp_settings import SmppSettings
+from app.models.smpp_callback import SmppCallback
 
 __all__ = [
     "Tenant",
@@ -41,4 +46,9 @@ __all__ = [
     "AuditLog",
     "IpWhitelistSettings",
     "IpWhitelistEntry",
+    "PlatformSettings",
+    "Notification",
+    "PaymentTransaction",
+    "SmppSettings",
+    "SmppCallback",
 ]

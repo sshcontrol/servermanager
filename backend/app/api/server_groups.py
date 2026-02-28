@@ -19,6 +19,19 @@ from app.models import User
 router = APIRouter(prefix="/server-groups", tags=["server-groups"])
 
 
+def _require_tenant_admin(current_user: User) -> User:
+    """Require tenant admin (blocks platform superadmin). Server groups are tenant-scoped."""
+    if current_user is None:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    if not current_user.tenant_id:
+        raise HTTPException(status_code=403, detail="Server groups are only available for tenant admins")
+    if current_user.is_superuser:
+        return current_user
+    if any(r.name == "admin" for r in (current_user.roles or [])):
+        return current_user
+    raise HTTPException(status_code=403, detail="Admin access required")
+
+
 class ServerGroupCreate(BaseModel):
     name: str
     description: str | None = None
@@ -43,7 +56,8 @@ async def list_server_groups(
     db: Annotated[AsyncSession, Depends(get_db)],
     current_user: Annotated[User, Depends(require_superuser)],
 ):
-    return await sgs.list_server_groups(db)
+    _require_tenant_admin(current_user)
+    return await sgs.list_server_groups(db, current_user.tenant_id)
 
 
 @router.post("")
@@ -52,7 +66,8 @@ async def create_server_group(
     db: Annotated[AsyncSession, Depends(get_db)],
     current_user: Annotated[User, Depends(require_superuser)],
 ):
-    sg = await sgs.create_server_group(db, body.name, body.description)
+    _require_tenant_admin(current_user)
+    sg = await sgs.create_server_group(db, body.name, current_user.tenant_id, body.description)
     await audit_service.log(
         db, "server_group_created",
         resource_type="server_group", resource_id=sg.id,
@@ -68,7 +83,8 @@ async def get_server_group(
     db: Annotated[AsyncSession, Depends(get_db)],
     current_user: Annotated[User, Depends(require_superuser)],
 ):
-    sg = await sgs.get_server_group(db, group_id)
+    _require_tenant_admin(current_user)
+    sg = await sgs.get_server_group(db, group_id, current_user.tenant_id)
     if not sg:
         raise HTTPException(status_code=404, detail="Server group not found")
     return {
@@ -88,7 +104,8 @@ async def update_server_group(
     db: Annotated[AsyncSession, Depends(get_db)],
     current_user: Annotated[User, Depends(require_superuser)],
 ):
-    sg = await sgs.update_server_group(db, group_id, body.name, body.description)
+    _require_tenant_admin(current_user)
+    sg = await sgs.update_server_group(db, group_id, current_user.tenant_id, body.name, body.description)
     if not sg:
         raise HTTPException(status_code=404, detail="Server group not found")
     return {"id": sg.id, "name": sg.name, "description": sg.description or ""}
@@ -101,12 +118,13 @@ async def delete_server_group(
     db: Annotated[AsyncSession, Depends(get_db)],
     current_user: Annotated[User, Depends(require_superuser)],
 ):
+    _require_tenant_admin(current_user)
     from app.core.auth import verify_destructive_verification_token
     verify_destructive_verification_token(request, current_user, "delete_server_group", group_id)
-    sg = await sgs.get_server_group(db, group_id)
+    sg = await sgs.get_server_group(db, group_id, current_user.tenant_id)
     if not sg:
         raise HTTPException(status_code=404, detail="Server group not found")
-    await sgs.delete_server_group(db, group_id)
+    await sgs.delete_server_group(db, group_id, current_user.tenant_id)
     await audit_service.log(
         db, "server_group_deleted",
         resource_type="server_group", resource_id=group_id,
@@ -121,9 +139,10 @@ async def list_group_servers(
     db: Annotated[AsyncSession, Depends(get_db)],
     current_user: Annotated[User, Depends(require_superuser)],
 ):
-    if not await sgs.get_server_group(db, group_id):
+    _require_tenant_admin(current_user)
+    if not await sgs.get_server_group(db, group_id, current_user.tenant_id):
         raise HTTPException(status_code=404, detail="Server group not found")
-    return await sgs.list_group_servers(db, group_id)
+    return await sgs.list_group_servers(db, group_id, current_user.tenant_id)
 
 
 @router.post("/{group_id}/servers")
@@ -133,9 +152,10 @@ async def add_server_to_group(
     db: Annotated[AsyncSession, Depends(get_db)],
     current_user: Annotated[User, Depends(require_superuser)],
 ):
-    if not await sgs.get_server_group(db, group_id):
+    _require_tenant_admin(current_user)
+    if not await sgs.get_server_group(db, group_id, current_user.tenant_id):
         raise HTTPException(status_code=404, detail="Server group not found")
-    ok = await sgs.add_server_to_group(db, group_id, body.server_id)
+    ok = await sgs.add_server_to_group(db, group_id, body.server_id, current_user.tenant_id)
     if not ok:
         raise HTTPException(status_code=400, detail="Server not found or already in group")
     await server_service.set_sync_requested(db, body.server_id)
@@ -173,9 +193,10 @@ async def remove_server_from_group(
     db: Annotated[AsyncSession, Depends(get_db)],
     current_user: Annotated[User, Depends(require_superuser)],
 ):
-    if not await sgs.get_server_group(db, group_id):
+    _require_tenant_admin(current_user)
+    if not await sgs.get_server_group(db, group_id, current_user.tenant_id):
         raise HTTPException(status_code=404, detail="Server group not found")
-    await sgs.remove_server_from_group(db, group_id, server_id)
+    await sgs.remove_server_from_group(db, group_id, server_id, current_user.tenant_id)
     await server_service.set_sync_requested(db, server_id)
     sync_results = []
     settings = get_settings()
@@ -210,9 +231,10 @@ async def list_group_access(
     db: Annotated[AsyncSession, Depends(get_db)],
     current_user: Annotated[User, Depends(require_superuser)],
 ):
-    if not await sgs.get_server_group(db, group_id):
+    _require_tenant_admin(current_user)
+    if not await sgs.get_server_group(db, group_id, current_user.tenant_id):
         raise HTTPException(status_code=404, detail="Server group not found")
-    return await sgs.list_group_access(db, group_id)
+    return await sgs.list_group_access(db, group_id, current_user.tenant_id)
 
 
 @router.post("/{group_id}/access")
@@ -222,15 +244,16 @@ async def set_group_user_access(
     db: Annotated[AsyncSession, Depends(get_db)],
     current_user: Annotated[User, Depends(require_superuser)],
 ):
+    _require_tenant_admin(current_user)
     if body.role not in ("admin", "user"):
         raise HTTPException(status_code=400, detail="role must be admin or user")
-    if not await sgs.get_server_group(db, group_id):
+    if not await sgs.get_server_group(db, group_id, current_user.tenant_id):
         raise HTTPException(status_code=404, detail="Server group not found")
-    ok = await sgs.set_group_user_access(db, group_id, body.user_id, body.role)
+    ok = await sgs.set_group_user_access(db, group_id, body.user_id, body.role, current_user.tenant_id)
     if not ok:
-        raise HTTPException(status_code=400, detail="Failed to set access")
+        raise HTTPException(status_code=400, detail="Failed to set access (user must belong to this tenant)")
     await user_key_service.ensure_user_has_ssh_key(db, body.user_id)
-    servers_list = await sgs.list_group_servers(db, group_id)
+    servers_list = await sgs.list_group_servers(db, group_id, current_user.tenant_id)
     for srv in servers_list:
         await server_service.set_sync_requested(db, srv["id"])
     sync_results = []
@@ -267,10 +290,11 @@ async def remove_group_user_access(
     db: Annotated[AsyncSession, Depends(get_db)],
     current_user: Annotated[User, Depends(require_superuser)],
 ):
-    if not await sgs.get_server_group(db, group_id):
+    _require_tenant_admin(current_user)
+    if not await sgs.get_server_group(db, group_id, current_user.tenant_id):
         raise HTTPException(status_code=404, detail="Server group not found")
-    await sgs.remove_group_user_access(db, group_id, user_id)
-    servers_list = await sgs.list_group_servers(db, group_id)
+    await sgs.remove_group_user_access(db, group_id, user_id, current_user.tenant_id)
+    servers_list = await sgs.list_group_servers(db, group_id, current_user.tenant_id)
     for srv in servers_list:
         await server_service.set_sync_requested(db, srv["id"])
     sync_results = []

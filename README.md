@@ -60,6 +60,17 @@ The frontend at port 3000 sends `/api` requests to the backend on port 8000. If 
 - **Frontend logs:** `docker compose logs frontend` — look for “Local: http://0.0.0.0:3000” and any errors.
 - **Test from the server:** `curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:3000` — should return 200. If it works locally but not from your browser, the firewall is blocking.
 
+**If the login page is missing Sign in, Create account, or Google button (or shows an old UI)**
+
+The frontend is built into the Docker image at build time. After pulling new code or making changes, you must rebuild the frontend image:
+
+```bash
+docker compose build --no-cache frontend
+docker compose up -d frontend
+```
+
+Then hard-refresh your browser (Ctrl+Shift+R or Cmd+Shift+R) to bypass cache. The login page footer should show "Version 6" when up to date. The Google button appears only when the backend has Google OAuth configured (`GOOGLE_OAUTH_CLIENT_ID` in `.env`).
+
 **Production tips**
 
 - Put **Nginx Proxy Manager** (or nginx/Caddy) in front for SSL: proxy to frontend `:3000` (which proxies `/api` to backend internally).
@@ -237,7 +248,13 @@ All commands below work in **Windows CMD** (Command Prompt) or on Linux/macOS. R
    docker compose exec backend python -m scripts.create_admin --username admin --password admin --email admin@65.21.240.77
    ```
 
-3. **Start the frontend**
+3. **Generate the platform SSH key** (required before deploying servers)
+   ```cmd
+   docker compose exec backend python -m scripts.generate_platform_key
+   ```
+   Or via the UI: log in as admin → **Keys** → Platform SSH key → **Generate**.
+
+4. **Start the frontend**
    - **In Docker:**  
      ```cmd
      docker compose up -d frontend
@@ -254,7 +271,7 @@ All commands below work in **Windows CMD** (Command Prompt) or on Linux/macOS. R
      npm run dev
      ```
 
-4. **Open the app:** http://65.21.240.77:3000/login — log in with `admin` / `admin`.
+5. **Open the app:** http://65.21.240.77:3000/login — log in with `admin` / `admin`.
 
 ---
 
@@ -280,6 +297,7 @@ All commands below work in **Windows CMD** (Command Prompt) or on Linux/macOS. R
    ```cmd
    cd backend
    python -m scripts.create_admin --username admin --password admin --email admin@65.21.240.77
+   python -m scripts.generate_platform_key
    ```
 
 3. **Frontend** — in a **third** CMD window from the project folder:

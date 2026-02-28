@@ -47,6 +47,7 @@
 
 body {
   min-height: 100vh;
+  overflow-x: hidden;
 }
 
 a {
@@ -72,6 +73,11 @@ button {
   padding: 0.5rem 1rem;
   border-radius: 8px;
   transition: background 0.2s, border-color 0.2s, transform 0.1s;
+}
+@media (max-width: 768px) {
+  button:not(.app-topbar-link) {
+    min-height: 44px;
+  }
 }
 button:hover {
   background: var(--surface-hover);
@@ -113,10 +119,28 @@ input, select, textarea {
   border-radius: 8px;
   padding: 0.6rem 0.85rem;
   width: 100%;
+  max-width: 100%;
+  min-width: 0;
   color: var(--text);
+  box-sizing: border-box;
+}
+@media (max-width: 768px) {
+  input, select, textarea {
+    min-height: 44px;
+    font-size: 16px;
+  }
+}
+.form-group input,
+.form-group select,
+.form-group textarea {
+  width: 100%;
 }
 input::placeholder, textarea::placeholder {
   color: var(--text-muted);
+}
+code {
+  word-break: break-all;
+  overflow-wrap: break-word;
 }
 input:focus, select:focus, textarea:focus {
   outline: none;
@@ -133,9 +157,28 @@ input:focus, select:focus, textarea:focus {
 }
 
 .container {
-  max-width: 1100px;
+  max-width: 1400px;
   margin: 0 auto;
   padding: 0 1.5rem;
+  width: 100%;
+  min-width: 0;
+}
+@media (max-width: 768px) {
+  .container {
+    padding: 0 1rem;
+  }
+}
+
+/* Harmonized page structure */
+.app-page {
+  padding-top: 0;
+  min-width: 0;
+  overflow-x: hidden;
+}
+
+/* Form cards: consistent max-width for readability (add .card-form for form-only cards) */
+.app-page .card.card-form {
+  max-width: 600px;
 }
 
 .page-header {
@@ -155,11 +198,27 @@ input:focus, select:focus, textarea:focus {
   flex-wrap: wrap;
   gap: 0.75rem;
 }
-.app-page {
-  padding-top: 0;
+
+/* Action buttons: consistent styling, wrap on mobile */
+.page-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+}
+@media (max-width: 768px) {
+  .page-actions {
+    width: 100%;
+  }
+  .page-actions .primary,
+  .page-actions .btn-outline,
+  .page-actions button {
+    flex: 1;
+    min-width: 120px;
+  }
 }
 
-/* Table wrapper: scrollable box on mobile so table stays visible in viewport */
+/* Table wrapper: horizontally scrollable so table content is not wrapped */
 .table-wrap {
   overflow-x: auto;
   -webkit-overflow-scrolling: touch;
@@ -169,10 +228,9 @@ input:focus, select:focus, textarea:focus {
   border: 1px solid var(--border);
   background: var(--bg-elevated);
 }
-@media (max-width: 768px) {
-  .table-wrap table {
-    min-width: 600px;
-  }
+.table-wrap table {
+  min-width: max-content;
+  width: 100%;
 }
 table {
   width: 100%;
@@ -182,6 +240,7 @@ th, td {
   text-align: left;
   padding: 0.75rem 1rem;
   border-bottom: 1px solid var(--border);
+  white-space: nowrap;
 }
 th {
   color: var(--text-muted);
@@ -207,6 +266,30 @@ tbody tr:hover {
   color: var(--text-muted);
   font-size: 0.9rem;
   font-weight: 500;
+}
+.form-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+}
+.form-row > * {
+  min-width: 0;
+}
+@media (max-width: 768px) {
+  .form-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .page-header-actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .page-header-actions input[type="text"],
+  .page-header-actions input[type="search"] {
+    width: 100%;
+    max-width: none;
+  }
 }
 
 .error-msg {
@@ -316,11 +399,22 @@ tbody tr:hover {
   flex-wrap: wrap;
 }
 .edit-user-server-row .edit-user-server-name {
-  min-width: 140px;
+  min-width: 0;
+  flex: 1 1 140px;
   font-size: 0.95rem;
 }
 .edit-user-server-row select {
-  min-width: 120px;
+  min-width: 0;
+  flex: 0 1 120px;
+}
+@media (max-width: 768px) {
+  .edit-user-server-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .edit-user-server-row select {
+    flex: 1 1 auto;
+  }
 }
 .edit-user-actions {
   display: flex;
@@ -418,8 +512,11 @@ tbody tr:hover {
 .app-topbar-link {
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: 0.5rem;
   padding: 0.5rem 0.85rem;
+  min-width: 44px;
+  min-height: 44px;
   color: var(--text-muted);
   font-size: 0.9rem;
   font-weight: 500;
@@ -441,6 +538,156 @@ tbody tr:hover {
 .app-topbar-logout:hover {
   color: var(--danger);
   background: rgba(231, 76, 60, 0.1);
+}
+
+/* Notification dropdown */
+.notification-dropdown-wrap {
+  position: relative;
+}
+.notification-bell-btn {
+  position: relative;
+  padding: 0.5rem 0.75rem !important;
+  gap: 0.4rem;
+}
+.notification-label {
+  font-size: 0.9rem;
+  font-weight: 500;
+  color: inherit;
+}
+.notification-bell-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+}
+.notification-bell-icon svg {
+  width: 100%;
+  height: 100%;
+}
+.notification-badge {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  font-size: 0.65rem;
+  font-weight: 700;
+  line-height: 16px;
+  text-align: center;
+  color: var(--persian-teal);
+  background: var(--primary);
+  border-radius: 8px;
+}
+.notification-dropdown {
+  position: absolute;
+  top: calc(100% + 0.5rem);
+  left: 0;
+  width: 360px;
+  max-width: calc(100vw - 2rem);
+  max-height: 400px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.notification-dropdown-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid var(--border);
+}
+.notification-dropdown-header h3 {
+  font-size: 0.95rem;
+  font-weight: 600;
+  margin: 0;
+  color: var(--text);
+}
+.notification-dropdown-list {
+  overflow-y: auto;
+  max-height: 340px;
+}
+.notification-empty {
+  padding: 1.5rem 1rem;
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.9rem;
+  text-align: center;
+}
+.notification-item {
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.notification-item:hover {
+  background: var(--surface-hover);
+}
+.notification-item.unread {
+  background: rgba(64, 224, 208, 0.06);
+}
+.notification-item-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.25rem;
+  gap: 0.5rem;
+}
+.notification-delete-btn {
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: color 0.15s, background 0.15s;
+}
+.notification-delete-btn:hover {
+  color: var(--danger);
+  background: rgba(231, 76, 60, 0.1);
+}
+.notification-delete-btn svg {
+  width: 14px;
+  height: 14px;
+}
+.notification-item-meta {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.notification-sender {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--primary);
+}
+.notification-time {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+}
+.notification-subject {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 0.2rem;
+}
+.notification-message {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  line-height: 1.4;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 /* Profile page with tabs */
@@ -489,6 +736,17 @@ tbody tr:hover {
   color: var(--primary);
   background: rgba(64, 224, 208, 0.12);
 }
+.profile-tab-danger {
+  color: var(--danger, #ef4444);
+}
+.profile-tab-danger:hover {
+  color: var(--danger, #ef4444);
+  background: rgba(239, 68, 68, 0.12);
+}
+.profile-tab-danger.active {
+  color: var(--danger, #ef4444);
+  background: rgba(239, 68, 68, 0.12);
+}
 .profile-tab-content {
   min-height: 200px;
 }
@@ -500,6 +758,25 @@ tbody tr:hover {
   border: 1px solid var(--border);
   border-radius: 12px;
   padding: 1.5rem 1.75rem;
+}
+.profile-delete-account-card {
+  border-color: var(--danger, #ef4444);
+  border-width: 2px;
+}
+.profile-delete-warning {
+  background: rgba(239, 68, 68, 0.08);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  border-radius: 8px;
+  padding: 1rem 1.25rem;
+  margin: 0.5rem 0;
+}
+.profile-delete-warning ul {
+  margin: 0.5rem 0;
+  padding-left: 1.25rem;
+}
+.profile-delete-warning p {
+  margin: 0.25rem 0;
+  color: var(--text-secondary);
 }
 .profile-section-title {
   font-size: 1.1rem;
@@ -722,13 +999,21 @@ tbody tr:hover {
   background: rgba(231, 76, 60, 0.1);
 }
 
-/* Dashboard page – professional content panel */
+/* Dashboard page – same structure as other pages, inside container */
 .dashboard-page {
-  max-width: 900px;
+  width: 100%;
+  min-width: 0;
+}
+.dashboard-page .dashboard-panel {
   background: rgba(18, 42, 66, 0.35);
   border: 1px solid rgba(64, 224, 208, 0.08);
   border-radius: 12px;
   padding: 1.5rem 1.75rem;
+}
+@media (max-width: 768px) {
+  .dashboard-page .dashboard-panel {
+    padding: 1rem;
+  }
 }
 .dashboard-header {
   margin-bottom: 1.5rem;
@@ -934,6 +1219,11 @@ tbody tr:hover {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
   gap: 1rem;
+}
+@media (max-width: 768px) {
+  .server-add-cards {
+    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  }
 }
 .server-add-card {
   background: var(--surface);
@@ -1309,6 +1599,19 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
 @media (max-width: 768px) {
   .sidebar-hamburger {
     display: flex;
+  }
+  .app-topbar {
+    padding: 0.5rem 0.75rem;
+    padding-left: 3.5rem;
+  }
+  .notification-label {
+    display: none;
+  }
+  .app-topbar-right {
+    gap: 0.15rem;
+  }
+  .app-topbar-link {
+    padding: 0.5rem;
   }
   .app-shell {
     flex-direction: column;

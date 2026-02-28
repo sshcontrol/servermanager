@@ -49,12 +49,12 @@ html { scroll-behavior: smooth; }
   border-bottom-color: rgba(255,255,255,0.06);
 }
 .land-nav-inner {
-  max-width: 1200px; margin: 0 auto; padding: 0 1.5rem;
+  max-width: 1200px; margin: 0 auto; padding: 0.75rem 1.5rem 0;
   display: flex; align-items: center; justify-content: space-between;
-  height: 64px;
+  min-height: 64px;
 }
 .land-nav-brand { display: flex; align-items: center; text-decoration: none; }
-.land-nav-brand .logo img { max-width: 150px; height: auto; }
+.land-nav-brand .logo img { max-width: 77px; height: auto; }
 .land-nav-links {
   display: flex; align-items: center; gap: 1.75rem;
 }
@@ -71,23 +71,17 @@ html { scroll-behavior: smooth; }
 .land-nav-links a:hover { color: var(--primary); }
 .land-nav-links a:hover::after { transform: scaleX(1); }
 .land-nav-actions { display: flex; align-items: center; gap: 0.75rem; }
-.land-nav-signin {
-  color: var(--text-muted); font-size: 0.9rem; font-weight: 500;
-  text-decoration: none; padding: 0.45rem 1rem; border-radius: 8px;
-  transition: color 0.2s, background 0.2s;
-  background: none; border: none; cursor: pointer; font-family: inherit;
-}
-.land-nav-signin:hover { color: var(--primary); background: rgba(255,255,255,0.05); }
-.land-nav-signup {
-  font-size: 0.9rem; font-weight: 600; text-decoration: none;
+.land-nav-panel {
+  font-size: 0.9rem; font-weight: 600;
   padding: 0.45rem 1.25rem; border-radius: 8px;
   background: linear-gradient(135deg, #2dd4bf 0%, #14b8a6 50%, #0d9488 100%);
   color: #022c22;
   box-shadow: 0 2px 10px rgba(45, 212, 191, 0.25);
   transition: transform 0.15s, box-shadow 0.2s, filter 0.2s;
   border: none; cursor: pointer; font-family: inherit;
+  display: inline-flex; align-items: center;
 }
-.land-nav-signup:hover { transform: translateY(-1px); box-shadow: 0 4px 16px rgba(45,212,191,0.35); filter: brightness(1.05); color: #022c22; }
+.land-nav-panel:hover { transform: translateY(-1px); box-shadow: 0 4px 16px rgba(45,212,191,0.35); filter: brightness(1.05); color: #022c22; }
 .land-nav-hamburger {
   display: none; background: none; border: none; color: var(--text); padding: 0.25rem;
 }
@@ -332,7 +326,6 @@ html { scroll-behavior: smooth; }
   .land-nav-links.open { display: flex; }
   .land-nav-hamburger { display: block; }
   .land-nav-actions { gap: 0.5rem; }
-  .land-nav-signin { display: none; }
   .land-hero { min-height: 80vh; padding-top: 5rem; }
   .land-features-grid, .land-benefits-grid, .land-steps, .land-plans-grid { grid-template-columns: 1fr; }
   .land-footer-inner { flex-direction: column; gap: 2rem; }
@@ -365,6 +358,7 @@ html { scroll-behavior: smooth; }
   background: rgba(4, 10, 20, 0.7);
   backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
   animation: auth-fade-in 0.25s ease;
+  overflow-y: auto;
 }
 
 @keyframes auth-fade-in {

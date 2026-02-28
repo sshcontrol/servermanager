@@ -1,17 +1,7 @@
-from datetime import datetime, timezone
 from sqlalchemy import Column, String, Boolean, DateTime, Text, ForeignKey
 from sqlalchemy.orm import relationship
 from app.database import Base
-import uuid
-
-
-def generate_uuid():
-    return str(uuid.uuid4())
-
-
-def utcnow_naive():
-    """Naive UTC datetime compatible with TIMESTAMP WITHOUT TIME ZONE columns."""
-    return datetime.now(timezone.utc).replace(tzinfo=None)
+from app.models.utils import generate_uuid, utcnow_naive  # noqa: F401 — re-exported for consumers
 
 
 class User(Base):
@@ -35,6 +25,12 @@ class User(Base):
     # TOTP 2FA
     totp_secret = Column(String(32), nullable=True)
     totp_enabled = Column(Boolean, default=False, nullable=False)
+
+    # SMS verification (user can enable/disable like 2FA)
+    sms_verification_enabled = Column(Boolean, default=False, nullable=False)
+
+    # Google OAuth
+    google_id = Column(String(64), nullable=True, index=True)
 
     created_at = Column(DateTime, default=utcnow_naive, nullable=False)
     updated_at = Column(DateTime, default=utcnow_naive, onupdate=utcnow_naive, nullable=False)

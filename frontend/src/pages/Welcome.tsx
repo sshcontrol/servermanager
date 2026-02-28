@@ -2,8 +2,11 @@ import { useState, useEffect } from "react";
 import { useNavigate, Navigate } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
 import { api } from "../api/client";
+import { validatePassword } from "../utils/password";
+import PasswordField from "../components/PasswordField";
 import { QRCodeSVG } from "qrcode.react";
 import LogoSpinner from "../components/LogoSpinner";
+import { normalizeToE164, isValidE164 } from "../lib/phone";
 
 type PlanInfo = {
   id: string;
@@ -37,14 +40,20 @@ export default function Welcome() {
   }
 
   const isAdmin = user?.is_superuser || user?.roles?.some((r) => r.name === "admin");
+  const isGoogleUser = user?.is_google_user === true;
+  const needsCompanyStep = isGoogleUser && isAdmin;
   const needsPassword = user?.needs_initial_password === true;
   const needsUsername = user?.needs_initial_username === true;
-  const totalSteps = needsPassword
-    ? (isAdmin ? 5 : 4)   // admin: password, 2FA, phone, plan, guide | user: password, 2FA, phone, guide
+  const baseTotalSteps = needsPassword
+    ? (isAdmin ? 6 : 5)   // admin: username, password, 2FA, sms, plan, guide | user: username, password, 2FA, sms, guide
     : needsUsername
-      ? (isAdmin ? 5 : 4) // admin: username, 2FA, phone, plan, guide | (user wouldn't have needs_initial_username)
-      : (isAdmin ? 4 : 3);  // admin: 2FA, phone, plan, guide | user: 2FA, phone, guide
+      ? (isAdmin ? 5 : 4) // admin: username, 2FA, sms, plan, guide | (user wouldn't have needs_initial_username)
+      : (isAdmin ? 4 : 3);  // admin: 2FA, sms, plan, guide | user: 2FA, sms, guide
+  const totalSteps = needsCompanyStep ? baseTotalSteps + 1 : baseTotalSteps;
 
+  const [companyName, setCompanyName] = useState(user?.company_name ?? "");
+  const [companyNameError, setCompanyNameError] = useState("");
+  const [companyNameLoading, setCompanyNameLoading] = useState(false);
   const [username, setUsername] = useState(user?.username ?? "");
   const [usernameError, setUsernameError] = useState("");
   const [usernameLoading, setUsernameLoading] = useState(false);
@@ -60,12 +69,22 @@ export default function Welcome() {
   const [totpLoading, setTotpLoading] = useState(false);
   const [totpSetup, setTotpSetup] = useState(false);
 
-  const [phone, setPhone] = useState(user?.phone || "");
+  const [phone, setPhone] = useState(user?.phone ?? "");
+  const [phoneVerifyCode, setPhoneVerifyCode] = useState("");
+  const [phoneSubStep, setPhoneSubStep] = useState<"enter" | "verify">("enter");
   const [phoneError, setPhoneError] = useState("");
   const [phoneLoading, setPhoneLoading] = useState(false);
 
   const [plans, setPlans] = useState<PlanInfo[]>([]);
   const [limits, setLimits] = useState<PlanLimits | null>(null);
+
+  useEffect(() => {
+    setPhone(user?.phone ?? "");
+  }, [user?.phone]);
+
+  useEffect(() => {
+    setCompanyName(user?.company_name ?? "");
+  }, [user?.company_name]);
 
   useEffect(() => {
     if (isAdmin) {
@@ -85,10 +104,15 @@ export default function Welcome() {
     try {
       await api.post("/api/auth/set-initial-username", { username: uname });
       await refreshUser();
-      // After refreshUser, needsUsername becomes false, so totpStep shifts to 0
       setStep(0);
     } catch (err) {
-      setUsernameError(err instanceof Error ? err.message : "Failed to set username");
+      const msg = err instanceof Error ? err.message : "Failed to set username";
+      if (msg.toLowerCase().includes("already set")) {
+        await refreshUser();
+        setStep(0);
+      } else {
+        setUsernameError(msg);
+      }
     } finally {
       setUsernameLoading(false);
     }
@@ -101,8 +125,9 @@ export default function Welcome() {
       setPasswordError("Username must be at least 2 characters");
       return;
     }
-    if (password.length < 8) {
-      setPasswordError("Password must be at least 8 characters");
+    const pwdErr = validatePassword(password);
+    if (pwdErr) {
+      setPasswordError(pwdErr);
       return;
     }
     if (password !== confirmPassword) {
@@ -113,10 +138,15 @@ export default function Welcome() {
     try {
       await api.post("/api/auth/set-initial-password", { username: uname, new_password: password });
       await refreshUser();
-      // After refreshUser, needsPassword becomes false, so totpStep shifts to 0
       setStep(0);
     } catch (err) {
-      setPasswordError(err instanceof Error ? err.message : "Failed to set password");
+      const msg = err instanceof Error ? err.message : "Failed to set password";
+      if (msg.toLowerCase().includes("already set")) {
+        await refreshUser();
+        setStep(0);
+      } else {
+        setPasswordError(msg);
+      }
     } finally {
       setPasswordLoading(false);
     }
@@ -143,7 +173,7 @@ export default function Welcome() {
     try {
       await api.post("/api/auth/totp/verify", { code: totpCode });
       await refreshUser();
-      setStep(needsPassword || needsUsername ? 2 : 1); // move to phone step
+      setStep(phoneStepIndex);
     } catch (err) {
       setTotpError(err instanceof Error ? err.message : "Invalid code");
     } finally {
@@ -151,15 +181,42 @@ export default function Welcome() {
     }
   };
 
-  const savePhone = async () => {
+  const requestPhoneCode = async () => {
     setPhoneError("");
+    const phoneE164 = phone.trim() ? normalizeToE164(phone) : "";
+    if (!phoneE164 || !isValidE164(phoneE164)) {
+      setPhoneError("Please enter a valid phone number with country code.");
+      return;
+    }
     setPhoneLoading(true);
     try {
-      await api.patch("/api/users/me", { phone: phone || null });
+      await api.post("/api/auth/request-phone-verification", { phone: phoneE164 });
+      setPhoneSubStep("verify");
+      setPhoneVerifyCode("");
+      setPhoneError("");
+    } catch (err) {
+      setPhoneError(err instanceof Error ? err.message : "Failed to send code");
+    } finally {
+      setPhoneLoading(false);
+    }
+  };
+
+  const verifyAndSavePhone = async () => {
+    setPhoneError("");
+    const phoneE164 = phone.trim() ? normalizeToE164(phone) : "";
+    if (!phoneE164 || !isValidE164(phoneE164) || phoneVerifyCode.length < 4) {
+      setPhoneError("Enter the 4-digit code from your phone.");
+      return;
+    }
+    setPhoneLoading(true);
+    try {
+      await api.post("/api/auth/verify-phone", { phone: phoneE164, code: phoneVerifyCode });
       await refreshUser();
+      setPhoneSubStep("enter");
+      setPhoneVerifyCode("");
       setStep(isAdmin ? planStep : guideStep);
     } catch (err) {
-      setPhoneError(err instanceof Error ? err.message : "Failed to save");
+      setPhoneError(err instanceof Error ? err.message : "Verification failed");
     } finally {
       setPhoneLoading(false);
     }
@@ -175,10 +232,35 @@ export default function Welcome() {
     }
   };
 
-  const stepLabels = needsPassword
+  const saveCompanyName = async () => {
+    setCompanyNameError("");
+    const name = companyName.trim();
+    if (name.length < 2) {
+      setCompanyNameError("Company name must be at least 2 characters");
+      return;
+    }
+    setCompanyNameLoading(true);
+    try {
+      await api.patch("/api/tenant/me", { company_name: name });
+      await refreshUser();
+      setStep(1);
+    } catch (err) {
+      setCompanyNameError(err instanceof Error ? err.message : "Failed to set company name");
+    } finally {
+      setCompanyNameLoading(false);
+    }
+  };
+
+  const stepLabels = needsCompanyStep
+    ? ["Company Name", ...(needsPassword
+        ? (isAdmin ? ["Set Username", "Set Password", "Two-Factor Auth", "Phone Number", "Your Plan", "Getting Started"] : ["Set Username", "Set Password", "Two-Factor Auth", "Phone Number", "Getting Started"])
+        : needsUsername
+          ? (isAdmin ? ["Set Username", "Two-Factor Auth", "Phone Number", "Your Plan", "Getting Started"] : ["Set Username", "Two-Factor Auth", "Phone Number", "Getting Started"])
+          : (isAdmin ? ["Two-Factor Auth", "Phone Number", "Your Plan", "Getting Started"] : ["Two-Factor Auth", "Phone Number", "Getting Started"]))]
+    : needsPassword
     ? (isAdmin
-        ? ["Username & Password", "Two-Factor Auth", "Phone Number", "Your Plan", "Getting Started"]
-        : ["Username & Password", "Two-Factor Auth", "Phone Number", "Getting Started"])
+        ? ["Set Username", "Set Password", "Two-Factor Auth", "Phone Number", "Your Plan", "Getting Started"]
+        : ["Set Username", "Set Password", "Two-Factor Auth", "Phone Number", "Getting Started"])
     : needsUsername
       ? (isAdmin
           ? ["Set Username", "Two-Factor Auth", "Phone Number", "Your Plan", "Getting Started"]
@@ -187,12 +269,14 @@ export default function Welcome() {
           ? ["Two-Factor Auth", "Phone Number", "Your Plan", "Getting Started"]
           : ["Two-Factor Auth", "Phone Number", "Getting Started"]);
 
-  const passwordStep = 0;
-  const usernameStep = 0;
-  const totpStep = needsPassword ? 1 : needsUsername ? 1 : 0;
-  const phoneStep = needsPassword ? 2 : needsUsername ? 2 : 1;
-  const planStep = isAdmin ? (needsPassword || needsUsername ? 3 : 2) : -1;
-  const guideStep = isAdmin ? (needsPassword || needsUsername ? 4 : 3) : (needsPassword || needsUsername ? 3 : 2);
+  const off = needsCompanyStep ? 1 : 0;
+  const companyStep = 0;
+  const usernameStep = off;
+  const passwordStep = needsPassword ? off + 1 : -1;
+  const totpStep = needsPassword ? off + 2 : needsUsername ? off + 1 : off;
+  const phoneStepIndex = needsPassword ? off + 3 : needsUsername ? off + 2 : off + 1;
+  const planStep = isAdmin ? (needsPassword ? off + 4 : needsUsername ? off + 3 : off + 2) : -1;
+  const guideStep = isAdmin ? (needsPassword ? off + 5 : needsUsername ? off + 4 : off + 3) : (needsPassword ? off + 4 : needsUsername ? off + 3 : off + 2);
 
   const cardStyle: React.CSSProperties = {
     background: "rgba(18, 42, 66, 0.65)",
@@ -273,8 +357,34 @@ export default function Welcome() {
         ))}
       </div>
 
-      {/* Step 0: Set Username only (admin signup) */}
-      {needsUsername && !needsPassword && step === usernameStep && (
+      {/* Step 0: Company Name (Google admin only) */}
+      {needsCompanyStep && step === companyStep && (
+        <div style={cardStyle}>
+          <h2 style={{ color: "#2dd4bf", marginTop: 0, marginBottom: "0.5rem" }}>Your Company Name</h2>
+          <p style={{ color: "#94a3b8", marginBottom: "1.5rem", lineHeight: 1.6 }}>
+            Enter your company or organization name. This will be shown to your team and in the dashboard.
+          </p>
+          <div style={{ maxWidth: 320, margin: "0 auto" }}>
+            <label style={{ display: "block", color: "#94a3b8", marginBottom: "0.5rem", fontSize: "0.9rem" }}>Company name</label>
+            <input
+              type="text"
+              value={companyName}
+              onChange={(e) => setCompanyName(e.target.value)}
+              placeholder="e.g. Acme Corp"
+              minLength={2}
+              maxLength={255}
+              style={{ width: "100%", padding: "0.75rem", background: "rgba(10,22,40,0.9)", border: "1px solid rgba(27,79,114,0.7)", borderRadius: 8, color: "#e2e8f0", fontSize: "1rem", marginBottom: "1rem" }}
+            />
+            {companyNameError && <p style={{ color: "#ef4444", fontSize: "0.85rem", marginTop: "0.5rem" }}>{companyNameError}</p>}
+            <button onClick={saveCompanyName} disabled={companyNameLoading || companyName.trim().length < 2} style={{ ...btnPrimary, width: "100%", marginTop: "1.5rem" }}>
+              {companyNameLoading ? "Saving…" : "Continue"}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Set Username (admin signup or first step when needsPassword) */}
+      {step === usernameStep && (needsUsername || needsPassword) && (
         <div style={cardStyle}>
           <h2 style={{ color: "#2dd4bf", marginTop: 0, marginBottom: "0.5rem" }}>Choose Your Username</h2>
           <p style={{ color: "#94a3b8", marginBottom: "1.5rem", lineHeight: 1.6 }}>
@@ -293,55 +403,84 @@ export default function Welcome() {
               style={{ width: "100%", padding: "0.75rem", background: "rgba(10,22,40,0.9)", border: "1px solid rgba(27,79,114,0.7)", borderRadius: 8, color: "#e2e8f0", fontSize: "1rem", marginBottom: "1rem" }}
             />
             {usernameError && <p style={{ color: "#ef4444", fontSize: "0.85rem", marginTop: "0.5rem" }}>{usernameError}</p>}
-            <button onClick={saveInitialUsername} disabled={usernameLoading || username.trim().length < 2} style={{ ...btnPrimary, width: "100%", marginTop: "1.5rem" }}>
-              {usernameLoading ? "Setting..." : "Set Username & Continue"}
-            </button>
+            {needsPassword ? (
+              <>
+                <button
+                  onClick={async () => {
+                    setUsernameError("");
+                    const uname = username.trim();
+                    if (uname.length < 2) {
+                      setUsernameError("Username must be at least 2 characters");
+                      return;
+                    }
+                    setUsernameLoading(true);
+                    try {
+                      const res = await api.get<{ available: boolean }>(`/api/auth/check-username?username=${encodeURIComponent(uname)}`);
+                      if (res.available) {
+                        setStep(passwordStep);
+                      } else {
+                        setUsernameError("This username is already taken. Please choose another.");
+                      }
+                    } catch {
+                      setUsernameError("Could not check username. Please try again.");
+                    } finally {
+                      setUsernameLoading(false);
+                    }
+                  }}
+                  disabled={username.trim().length < 2 || usernameLoading}
+                  style={{ ...btnPrimary, width: "100%", marginTop: "1.5rem" }}
+                >
+                  {usernameLoading ? "Checking..." : "Continue"}
+                </button>
+              </>
+            ) : (
+              <button onClick={saveInitialUsername} disabled={usernameLoading || username.trim().length < 2} style={{ ...btnPrimary, width: "100%", marginTop: "1.5rem" }}>
+                {usernameLoading ? "Setting..." : "Set Username & Continue"}
+              </button>
+            )}
           </div>
         </div>
       )}
 
-      {/* Step 0: Set Username & Password (invited users only) */}
+      {/* Step 1: Set Password (invited users only, after username step) */}
       {needsPassword && step === passwordStep && (
         <div style={cardStyle}>
-          <h2 style={{ color: "#2dd4bf", marginTop: 0, marginBottom: "0.5rem" }}>Set Up Your Account</h2>
-          <p style={{ color: "#94a3b8", marginBottom: "1.5rem", lineHeight: 1.6 }}>
-            Choose a username and password for your account. You will use these to sign in.
+          <h2 style={{ color: "#2dd4bf", marginTop: 0, marginBottom: "0.5rem" }}>Set Your Password</h2>
+          <p style={{ color: "#94a3b8", marginBottom: "0.5rem", lineHeight: 1.6 }}>
+            Choose a password for your account. You will use it with your username to sign in.
+          </p>
+          <p style={{ color: "#64748b", fontSize: "0.9rem", marginBottom: "1.5rem" }}>
+            Username: <strong style={{ color: "#e2e8f0" }}>{username.trim()}</strong>
           </p>
           <div style={{ maxWidth: 320, margin: "0 auto" }}>
-            <label style={{ display: "block", color: "#94a3b8", marginBottom: "0.5rem", fontSize: "0.9rem" }}>Username</label>
-            <input
-              type="text"
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-              placeholder="Choose a username (min 2 characters)"
-              minLength={2}
-              maxLength={100}
-              autoComplete="username"
-              style={{ width: "100%", padding: "0.75rem", background: "rgba(10,22,40,0.9)", border: "1px solid rgba(27,79,114,0.7)", borderRadius: 8, color: "#e2e8f0", fontSize: "1rem", marginBottom: "1rem" }}
-            />
-            <label style={{ display: "block", color: "#94a3b8", marginBottom: "0.5rem", fontSize: "0.9rem" }}>Password</label>
-            <input
-              type="password"
+            <PasswordField
+              id="welcome-password"
               value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder="Min 8 characters"
-              minLength={8}
-              autoComplete="new-password"
-              style={{ width: "100%", padding: "0.75rem", background: "rgba(10,22,40,0.9)", border: "1px solid rgba(27,79,114,0.7)", borderRadius: 8, color: "#e2e8f0", fontSize: "1rem", marginBottom: "1rem" }}
+              onChange={setPassword}
+              label="Password"
+              placeholder="Enter password"
+              inputStyle={{ width: "100%", padding: "0.75rem", background: "rgba(10,22,40,0.9)", border: "1px solid rgba(27,79,114,0.7)", borderRadius: 8, color: "#e2e8f0", fontSize: "1rem" }}
             />
-            <label style={{ display: "block", color: "#94a3b8", marginBottom: "0.5rem", fontSize: "0.9rem" }}>Confirm Password</label>
-            <input
-              type="password"
-              value={confirmPassword}
-              onChange={(e) => setConfirmPassword(e.target.value)}
-              placeholder="Repeat password"
-              autoComplete="new-password"
-              style={{ width: "100%", padding: "0.75rem", background: "rgba(10,22,40,0.9)", border: "1px solid rgba(27,79,114,0.7)", borderRadius: 8, color: "#e2e8f0", fontSize: "1rem" }}
-            />
+            <div style={{ marginTop: "1rem" }}>
+              <label style={{ display: "block", color: "#94a3b8", marginBottom: "0.5rem", fontSize: "0.9rem" }}>Confirm Password</label>
+              <input
+                type="password"
+                value={confirmPassword}
+                onChange={(e) => setConfirmPassword(e.target.value)}
+                placeholder="Repeat password"
+                autoComplete="new-password"
+                style={{ width: "100%", padding: "0.75rem", background: "rgba(10,22,40,0.9)", border: "1px solid rgba(27,79,114,0.7)", borderRadius: 8, color: "#e2e8f0", fontSize: "1rem" }}
+              />
+            </div>
             {passwordError && <p style={{ color: "#ef4444", fontSize: "0.85rem", marginTop: "0.5rem" }}>{passwordError}</p>}
-            <button onClick={saveInitialPassword} disabled={passwordLoading || username.trim().length < 2 || password.length < 8 || password !== confirmPassword} style={{ ...btnPrimary, width: "100%", marginTop: "1.5rem" }}>
-              {passwordLoading ? "Setting..." : "Set Username & Password & Continue"}
-            </button>
+            <div style={{ display: "flex", gap: "1rem", marginTop: "1.5rem", flexDirection: "column" }}>
+              <button onClick={saveInitialPassword} disabled={passwordLoading || username.trim().length < 2 || password.length < 8 || password !== confirmPassword} style={{ ...btnPrimary, width: "100%" }}>
+                {passwordLoading ? "Setting..." : "Set Password & Continue"}
+              </button>
+              <button onClick={() => { setStep(usernameStep); setPasswordError(""); setPassword(""); setConfirmPassword(""); }} style={{ ...btnSecondary, width: "100%" }}>
+                Back to change username
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -359,7 +498,7 @@ export default function Welcome() {
               <button onClick={setupTotp} disabled={totpLoading} style={btnPrimary}>
                 {totpLoading ? "Setting up..." : "Enable 2FA"}
               </button>
-              <button onClick={() => setStep(phoneStep)} style={btnSecondary}>
+              <button onClick={() => setStep(phoneStepIndex)} style={btnSecondary}>
                 Skip for now
               </button>
             </div>
@@ -394,26 +533,58 @@ export default function Welcome() {
       )}
 
       {/* Phone step */}
-      {step === phoneStep && (
+      {step === phoneStepIndex && (
         <div style={cardStyle}>
           <h2 style={{ color: "#2dd4bf", marginTop: 0, marginBottom: "0.5rem" }}>Add Your Phone Number</h2>
           <p style={{ color: "#94a3b8", marginBottom: "1.5rem", lineHeight: 1.6 }}>
-            Add a phone number for account recovery and notifications. Use international format (e.g. +1234567890).
+            Add a phone number for account recovery and notifications. We'll send a verification code to confirm.
           </p>
           <div style={{ maxWidth: 320, margin: "0 auto" }}>
-            <input
-              type="tel" value={phone} onChange={(e) => setPhone(e.target.value)}
-              placeholder="+1234567890"
-              style={{ width: "100%", padding: "0.75rem", background: "rgba(10,22,40,0.9)", border: "1px solid rgba(27,79,114,0.7)", borderRadius: 8, color: "#e2e8f0", fontSize: "1rem" }}
-            />
+            <div style={{ marginBottom: "1rem" }}>
+              <input
+                type="tel"
+                value={phone}
+                onChange={(e) => setPhone(e.target.value.replace(/[^\d+]/g, "").slice(0, 16))}
+                placeholder="+32xxx for country and phone format"
+                disabled={phoneSubStep === "verify"}
+                style={{ width: "100%", padding: "0.75rem", background: "rgba(10,22,40,0.9)", border: "1px solid rgba(27,79,114,0.7)", borderRadius: 8, color: "#e2e8f0", fontSize: "1rem" }}
+              />
+            </div>
+            {phoneSubStep === "verify" && (
+              <div style={{ marginBottom: "1rem" }}>
+                <label style={{ display: "block", color: "#94a3b8", marginBottom: "0.5rem", fontSize: "0.9rem" }}>Verification code</label>
+                <input
+                  type="text"
+                  value={phoneVerifyCode}
+                  onChange={(e) => setPhoneVerifyCode(e.target.value.replace(/\D/g, "").slice(0, 8))}
+                  placeholder="0000"
+                  maxLength={8}
+                  inputMode="numeric"
+                  style={{ width: "100%", padding: "0.75rem", background: "rgba(10,22,40,0.9)", border: "1px solid rgba(27,79,114,0.7)", borderRadius: 8, color: "#e2e8f0", fontSize: "1rem", textAlign: "center", letterSpacing: "0.2em" }}
+                />
+              </div>
+            )}
             {phoneError && <p style={{ color: "#ef4444", fontSize: "0.85rem", marginTop: "0.5rem" }}>{phoneError}</p>}
             <div style={{ display: "flex", gap: "1rem", marginTop: "1.5rem" }}>
-              <button onClick={savePhone} disabled={phoneLoading} style={{ ...btnPrimary, flex: 1 }}>
-                {phoneLoading ? "Saving..." : "Save"}
-              </button>
-              <button onClick={() => setStep(isAdmin ? planStep : guideStep)} style={{ ...btnSecondary, flex: 1 }}>
-                Skip
-              </button>
+              {phoneSubStep === "verify" ? (
+                <>
+                  <button onClick={verifyAndSavePhone} disabled={phoneLoading || phoneVerifyCode.length < 4} style={{ ...btnPrimary, flex: 1 }}>
+                    {phoneLoading ? "Verifying..." : "Verify & Save"}
+                  </button>
+                  <button onClick={() => { setPhoneSubStep("enter"); setPhoneError(""); }} style={{ ...btnSecondary, flex: 1 }}>
+                    Back
+                  </button>
+                </>
+              ) : (
+                <>
+                  <button onClick={requestPhoneCode} disabled={phoneLoading || !phone.trim()} style={{ ...btnPrimary, flex: 1 }}>
+                    {phoneLoading ? "Sending..." : "Send verification code"}
+                  </button>
+                  <button onClick={() => setStep(isAdmin ? planStep : guideStep)} style={{ ...btnSecondary, flex: 1 }}>
+                    Skip
+                  </button>
+                </>
+              )}
             </div>
           </div>
         </div>

@@ -4,6 +4,7 @@ import { HashRouter } from "react-router-dom";
 import App from "./App";
 import { AuthProvider } from "./contexts/AuthContext";
 import { ToastProvider } from "./components/Toast";
+import ErrorBoundary from "./components/ErrorBoundary";
 import "./index.css";
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
@@ -11,7 +12,9 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
     <HashRouter future={{ v7_startTransition: true }}>
       <AuthProvider>
         <ToastProvider>
-          <App />
+          <ErrorBoundary>
+            <App />
+          </ErrorBoundary>
         </ToastProvider>
       </AuthProvider>
     </HashRouter>

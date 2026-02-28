@@ -1,5 +1,8 @@
-import React, { createContext, useContext, useState, useEffect, useCallback } from "react";
+import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from "react";
 import { api } from "../api/client";
+
+const IDLE_LOGOUT_MS = 2 * 60 * 60 * 1000; // 2 hours
+const IDLE_THROTTLE_MS = 60_000; // Reset timer at most once per minute on activity
 
 export type User = {
   id: string;
@@ -12,9 +15,12 @@ export type User = {
   totp_enabled: boolean;
   email_verified: boolean;
   phone_verified: boolean;
+  sms_verification_enabled?: boolean;
   onboarding_completed: boolean;
   needs_initial_password?: boolean;
   needs_initial_username?: boolean;
+  is_google_user?: boolean;
+  is_tenant_owner?: boolean;
   tenant_id?: string | null;
   company_name?: string | null;
   created_at: string;
@@ -24,9 +30,9 @@ export type User = {
 type AuthContextType = {
   user: User | null;
   loading: boolean;
-  login: (username: string, password: string, totpCode?: string) => Promise<void>;
+  login: (username: string, password: string, totpCode?: string, recaptchaToken?: string, smsPayload?: { pendingToken: string; smsCode: string }) => Promise<void>;
   logout: () => void;
-  refreshUser: () => Promise<void>;
+  refreshUser: (rethrowOnError?: boolean) => Promise<void>;
   isAdmin: boolean;
   isPlatformSuperadmin: boolean;
 };
@@ -38,7 +44,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // If there's no token, show landing immediately; only show loading when we might be logged in
   const [loading, setLoading] = useState(() => !!localStorage.getItem("access_token"));
 
-  const refreshUser = useCallback(async () => {
+  const refreshUser = useCallback(async (rethrowOnError = false) => {
     const token = localStorage.getItem("access_token");
     if (!token) {
       setUser(null);
@@ -48,10 +54,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     try {
       const me = await api.get<User>("/api/auth/me");
       setUser(me);
-    } catch {
+    } catch (err) {
       localStorage.removeItem("access_token");
       localStorage.removeItem("refresh_token");
       setUser(null);
+      if (rethrowOnError) throw err;
     } finally {
       setLoading(false);
     }
@@ -62,18 +69,29 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [refreshUser]);
 
   const login = useCallback(
-    async (username: string, password: string, totpCode?: string) => {
+    async (
+      username: string,
+      password: string,
+      totpCode?: string,
+      recaptchaToken?: string,
+      smsPayload?: { pendingToken: string; smsCode: string }
+    ) => {
+      const body: Record<string, unknown> = smsPayload
+        ? { pending_token: smsPayload.pendingToken, sms_code: smsPayload.smsCode, recaptcha_token: recaptchaToken ?? null }
+        : { username, password, totp_code: totpCode ?? null, recaptcha_token: recaptchaToken ?? null };
       const res = await api.post<{
-        access_token: string;
-        refresh_token: string;
-        user_id: string;
-        username: string;
-        email: string;
-      }>("/api/auth/login", {
-        username,
-        password,
-        totp_code: totpCode ?? null,
-      });
+        access_token?: string;
+        refresh_token?: string;
+        user_id?: string;
+        username?: string;
+        email?: string;
+        requires_sms?: boolean;
+        pending_token?: string;
+      }>("/api/auth/login", body);
+      if (res.requires_sms && res.pending_token) {
+        throw { requiresSms: true, pendingToken: res.pending_token } as { requiresSms: boolean; pendingToken: string };
+      }
+      if (!res.access_token || !res.refresh_token) throw new Error("Login failed");
       localStorage.setItem("access_token", res.access_token);
       localStorage.setItem("refresh_token", res.refresh_token);
       await refreshUser();
@@ -86,6 +104,36 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     localStorage.removeItem("refresh_token");
     setUser(null);
   }, []);
+
+  // Idle logout: after 2 hours of no activity, log the user out
+  const idleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastActivityRef = useRef<number>(Date.now());
+
+  useEffect(() => {
+    if (!user) return;
+
+    const resetIdleTimer = () => {
+      const now = Date.now();
+      if (now - lastActivityRef.current < IDLE_THROTTLE_MS) return;
+      lastActivityRef.current = now;
+      if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
+      idleTimerRef.current = setTimeout(() => {
+        logout();
+        if (typeof window !== "undefined") window.location.href = "/";
+      }, IDLE_LOGOUT_MS);
+    };
+
+    resetIdleTimer(); // Start timer on mount
+
+    const events = ["mousedown", "mousemove", "keydown", "scroll", "touchstart"];
+    events.forEach((ev) => window.addEventListener(ev, resetIdleTimer));
+
+    return () => {
+      events.forEach((ev) => window.removeEventListener(ev, resetIdleTimer));
+      if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
+      idleTimerRef.current = null;
+    };
+  }, [user, logout]);
 
   const isPlatformSuperadmin = user?.is_superuser === true && !user?.tenant_id;
   const isAdmin =

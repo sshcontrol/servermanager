@@ -90,7 +90,7 @@ async def global_exception_handler(request: Request, exc: Exception):
 app = FastAPI(
     title="SSHCONTROL",
     description="Server management with JWT auth, RBAC, TOTP 2FA, and SSH key access",
-    version="3.7.0",
+    version="6.0.0",
     lifespan=lifespan,
 )
 # Register HTTPException first so 401/404 etc. return correct status; generic handler only for real 500s
@@ -100,17 +100,23 @@ app.add_exception_handler(Exception, global_exception_handler)
 _cors_origins = os.environ.get("CORS_ORIGINS", "").strip()
 if _cors_origins:
     _allowed_origins = [o.strip() for o in _cors_origins.split(",") if o.strip()]
+    _allow_origin_regex = None
 else:
     _allowed_origins = [
         "https://sshcontrol.com",
         "https://www.sshcontrol.com",
         "http://localhost:3000",
         "http://127.0.0.1:3000",
+        "http://localhost",
+        "http://127.0.0.1",
     ]
+    # Allow localhost/127.0.0.1 with any port, and common LAN IPs (192.168.x.x, 10.x.x.x)
+    _allow_origin_regex = r"^https?://(localhost|127\.0\.0\.1)(:[0-9]+)?$|^https?://(192\.168\.|10\.)(\d{1,3}\.){2}\d{1,3}(:[0-9]+)?$"
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_allowed_origins,
+    allow_origin_regex=_allow_origin_regex,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type", "Accept"],

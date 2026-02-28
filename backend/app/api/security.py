@@ -13,6 +13,19 @@ from app.models import User
 router = APIRouter(prefix="/security", tags=["security"])
 
 
+def _require_tenant_admin(current_user: User) -> User:
+    """Require tenant admin (blocks platform superadmin). IP whitelist is tenant-scoped."""
+    if current_user is None:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    if not current_user.tenant_id:
+        raise HTTPException(status_code=403, detail="IP whitelist is only available for tenant admins")
+    if current_user.is_superuser:
+        return current_user
+    if any(r.name == "admin" for r in (current_user.roles or [])):
+        return current_user
+    raise HTTPException(status_code=403, detail="Admin access required")
+
+
 class WhitelistSettingsResponse(BaseModel):
     enabled: bool
 
@@ -46,6 +59,7 @@ async def get_whitelist_settings(
     db: Annotated[AsyncSession, Depends(get_db)],
     current_user: Annotated[User, Depends(require_superuser)],
 ):
+    _require_tenant_admin(current_user)
     enabled = await security_service.get_whitelist_enabled(db, tenant_id=current_user.tenant_id)
     return WhitelistSettingsResponse(enabled=enabled)
 
@@ -56,6 +70,7 @@ async def update_whitelist_settings(
     db: Annotated[AsyncSession, Depends(get_db)],
     current_user: Annotated[User, Depends(require_superuser)],
 ):
+    _require_tenant_admin(current_user)
     enabled = await security_service.set_whitelist_enabled(db, body.enabled, tenant_id=current_user.tenant_id)
     return WhitelistSettingsResponse(enabled=enabled)
 
@@ -65,6 +80,7 @@ async def list_whitelist_entries(
     db: Annotated[AsyncSession, Depends(get_db)],
     current_user: Annotated[User, Depends(require_superuser)],
 ):
+    _require_tenant_admin(current_user)
     return await security_service.list_whitelist_entries(db, tenant_id=current_user.tenant_id)
 
 
@@ -74,6 +90,7 @@ async def create_whitelist_entry(
     db: Annotated[AsyncSession, Depends(get_db)],
     current_user: Annotated[User, Depends(require_superuser)],
 ):
+    _require_tenant_admin(current_user)
     ip = (body.ip_address or "").strip()
     if not ip:
         raise HTTPException(status_code=400, detail="IP address is required")
@@ -86,6 +103,8 @@ async def create_whitelist_entry(
         user_id=body.user_id if body.scope == "user" else None,
         tenant_id=current_user.tenant_id,
     )
+    if entry is None:
+        raise HTTPException(status_code=400, detail="User must belong to this tenant")
     return {"id": entry.id, "ip_address": entry.ip_address, "scope": entry.scope, "user_id": entry.user_id}
 
 
@@ -96,6 +115,7 @@ async def update_whitelist_entry(
     db: Annotated[AsyncSession, Depends(get_db)],
     current_user: Annotated[User, Depends(require_superuser)],
 ):
+    _require_tenant_admin(current_user)
     entry = await security_service.update_whitelist_entry(
         db, entry_id,
         ip_address=body.ip_address,
@@ -103,8 +123,10 @@ async def update_whitelist_entry(
         user_id=body.user_id,
         tenant_id=current_user.tenant_id,
     )
-    if not entry:
+    if entry is None:
         raise HTTPException(status_code=404, detail="Entry not found")
+    if entry == "invalid_user":
+        raise HTTPException(status_code=400, detail="User must belong to this tenant")
     return {"id": entry.id, "ip_address": entry.ip_address, "scope": entry.scope, "user_id": entry.user_id}
 
 
@@ -114,6 +136,7 @@ async def delete_whitelist_entry(
     db: Annotated[AsyncSession, Depends(get_db)],
     current_user: Annotated[User, Depends(require_superuser)],
 ):
+    _require_tenant_admin(current_user)
     ok = await security_service.delete_whitelist_entry(db, entry_id, tenant_id=current_user.tenant_id)
     if not ok:
         raise HTTPException(status_code=404, detail="Entry not found")

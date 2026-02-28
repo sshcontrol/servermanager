@@ -5,14 +5,19 @@ import { useAuth } from "../contexts/AuthContext";
 import { useToast } from "../components/Toast";
 import DestructiveVerificationModal from "../components/DestructiveVerificationModal";
 import Spinner from "../components/Spinner";
+import { normalizeToE164, isValidE164 } from "../lib/phone";
 
 type UserRow = {
   id: string;
   email: string;
   username: string;
+  phone?: string | null;
+  phone_verified?: boolean;
   is_active: boolean;
   is_superuser: boolean;
   totp_enabled: boolean;
+  onboarding_completed?: boolean;
+  needs_initial_password?: boolean;
   created_at: string;
   roles: { id: string; name: string }[];
   server_access?: { server_id: string; role: string }[];
@@ -39,7 +44,13 @@ export default function ModifyUsers() {
   const [editIsActive, setEditIsActive] = useState(true);
   const [editTotpEnabled, setEditTotpEnabled] = useState(false);
   const [editLoading, setEditLoading] = useState(false);
+  const [editPhone, setEditPhone] = useState("");
+  const [editPhoneVerified, setEditPhoneVerified] = useState(false);
+  const [editPhoneStep, setEditPhoneStep] = useState<"enter" | "verify">("enter");
+  const [editPhoneVerifyCode, setEditPhoneVerifyCode] = useState("");
+  const [editPhoneLoading, setEditPhoneLoading] = useState(false);
   const [deletingUserId, setDeletingUserId] = useState<string | null>(null);
+  const [resendWelcomeUserId, setResendWelcomeUserId] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const limit = 20;
 
@@ -88,6 +99,19 @@ export default function ModifyUsers() {
     }
   };
 
+  const resendWelcome = async (u: UserRow) => {
+    if (!u.needs_initial_password) return;
+    setResendWelcomeUserId(u.id);
+    try {
+      await api.post(`/api/users/${u.id}/resend-welcome`);
+      toast("success", `Password reset link sent to ${u.email}.`);
+    } catch (e) {
+      toast("error", e instanceof Error ? e.message : "Failed to send link");
+    } finally {
+      setResendWelcomeUserId(null);
+    }
+  };
+
   const loadUsers = async () => {
     setLoading(true);
     setError("");
@@ -123,6 +147,10 @@ export default function ModifyUsers() {
     setEditRoleIds(user.roles.map((r) => r.id));
     setEditIsActive(user.is_active);
     setEditTotpEnabled(user.totp_enabled);
+    setEditPhone(user.phone ?? "");
+    setEditPhoneVerified(user.phone_verified ?? false);
+    setEditPhoneStep("enter");
+    setEditPhoneVerifyCode("");
     const acc: Record<string, "admin" | "user"> = {};
     (user.server_access || []).forEach((a) => { if (a.role === "admin" || a.role === "user") acc[a.server_id] = a.role; });
     setEditServerAccess(acc);
@@ -133,11 +161,54 @@ export default function ModifyUsers() {
       setEditRoleIds(fresh.roles.map((r) => r.id));
       setEditIsActive(fresh.is_active);
       setEditTotpEnabled(fresh.totp_enabled);
+      setEditPhone(fresh.phone ?? "");
+      setEditPhoneVerified(fresh.phone_verified ?? false);
       const freshAcc: Record<string, "admin" | "user"> = {};
       (fresh.server_access || []).forEach((a) => { if (a.role === "admin" || a.role === "user") freshAcc[a.server_id] = a.role; });
       setEditServerAccess(freshAcc);
     } catch {
       // keep initial values if fetch fails
+    }
+  };
+
+  const requestEditPhoneCode = async () => {
+    if (!editingUserId) return;
+    const phone = editPhone.trim() ? normalizeToE164(editPhone) : "";
+    if (!phone || !isValidE164(phone)) {
+      setMessage({ type: "error", text: "Enter a valid phone number." });
+      return;
+    }
+    setEditPhoneLoading(true);
+    setMessage(null);
+    try {
+      await api.post(`/api/users/${editingUserId}/request-phone-verification`, { phone });
+      setMessage({ type: "success", text: "Verification code sent." });
+      setEditPhoneStep("verify");
+      setEditPhoneVerifyCode("");
+    } catch (e) {
+      setMessage({ type: "error", text: e instanceof Error ? e.message : "Failed to send code" });
+    } finally {
+      setEditPhoneLoading(false);
+    }
+  };
+
+  const verifyEditPhone = async () => {
+    if (!editingUserId) return;
+    const phone = editPhone.trim() ? normalizeToE164(editPhone) : "";
+    if (!phone || !isValidE164(phone) || editPhoneVerifyCode.length < 4) return;
+    setEditPhoneLoading(true);
+    setMessage(null);
+    try {
+      await api.post(`/api/users/${editingUserId}/verify-phone`, { phone, code: editPhoneVerifyCode });
+      setMessage({ type: "success", text: "Phone verified." });
+      setEditPhoneStep("enter");
+      setEditPhoneVerifyCode("");
+      setEditPhoneVerified(true);
+      loadUsers();
+    } catch (e) {
+      setMessage({ type: "error", text: e instanceof Error ? e.message : "Verification failed" });
+    } finally {
+      setEditPhoneLoading(false);
     }
   };
 
@@ -208,14 +279,14 @@ export default function ModifyUsers() {
     <div className="container app-page">
       <div className="page-header page-header-actions">
         <h1>Modify users</h1>
-        <div style={{ display: "flex", gap: "0.75rem", alignItems: "center" }}>
+        <div className="page-actions">
           {!editingUserId && !loading && users.length > 0 && (
             <input
               type="text"
               placeholder="Search users…"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              style={{ width: 220, padding: "0.4rem 0.7rem", fontSize: "0.9rem" }}
+              style={{ width: "100%", maxWidth: 220, padding: "0.4rem 0.7rem", fontSize: "0.9rem" }}
             />
           )}
           <Link to="/users/add" className="primary" style={{ textDecoration: "none", display: "inline-flex", alignItems: "center", padding: "0.5rem 1rem" }}>
@@ -230,7 +301,7 @@ export default function ModifyUsers() {
         </p>
       )}
       {editingUserId ? (
-        <div className="card" style={{ marginBottom: "1.5rem", maxWidth: 560 }}>
+        <div className="card card-form" style={{ marginBottom: "1.5rem", maxWidth: 560 }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "0.5rem", marginBottom: "1rem" }}>
             <h2 className="card-subtitle" style={{ marginBottom: 0 }}>Edit user</h2>
             <button type="button" className="btn-outline" onClick={() => setEditingUserId(null)}>← Back to users</button>
@@ -256,6 +327,46 @@ export default function ModifyUsers() {
                   <span>2FA enabled (uncheck to disable 2FA for this user)</span>
                 </label>
               </div>
+            </div>
+            <div className="form-group">
+              <label className="edit-user-section-label">Phone</label>
+              {editPhoneVerified ? (
+                <p style={{ color: "var(--text-muted)", fontSize: "0.9rem" }}>
+                  Verified: {editPhone || "—"}. Only platform admin can change verified phone.
+                </p>
+              ) : (
+                <div>
+                  <div style={{ marginBottom: "0.5rem" }}>
+                    <input
+                      type="tel"
+                      value={editPhone}
+                      onChange={(e) => setEditPhone(e.target.value.replace(/[^\d+]/g, "").slice(0, 16))}
+                      placeholder="+32xxx for country and phone format"
+                      style={{ width: "100%", maxWidth: 280 }}
+                      disabled={editPhoneStep === "verify"}
+                    />
+                  </div>
+                  {editPhoneStep === "verify" && (
+                    <div style={{ marginBottom: "0.5rem" }}>
+                      <input type="text" value={editPhoneVerifyCode} onChange={(e) => setEditPhoneVerifyCode(e.target.value.replace(/\D/g, "").slice(0, 8))} placeholder="0000" maxLength={8} inputMode="numeric" style={{ width: 120 }} />
+                    </div>
+                  )}
+                  <div style={{ display: "flex", gap: "0.5rem" }}>
+                    {editPhoneStep === "verify" ? (
+                      <button type="button" className="btn-outline" onClick={verifyEditPhone} disabled={editPhoneLoading || editPhoneVerifyCode.length < 4}>
+                        {editPhoneLoading ? "Verifying…" : "Verify"}
+                      </button>
+                    ) : (
+                      <button type="button" className="btn-outline" onClick={requestEditPhoneCode} disabled={editPhoneLoading || !editPhone.trim()}>
+                        {editPhoneLoading ? "Sending…" : "Send verification code"}
+                      </button>
+                    )}
+                    {editPhoneStep === "verify" && (
+                      <button type="button" className="btn-outline" onClick={() => { setEditPhoneStep("enter"); setEditPhoneVerifyCode(""); }}>Back</button>
+                    )}
+                  </div>
+                </div>
+              )}
             </div>
             <div className="form-group">
               <label className="edit-user-section-label">Roles</label>
@@ -315,6 +426,7 @@ export default function ModifyUsers() {
                     <tr>
                       <th>Username</th>
                       <th>Email</th>
+                      <th>Status</th>
                       <th>Roles</th>
                       <th>2FA</th>
                       <th>Active</th>
@@ -324,7 +436,7 @@ export default function ModifyUsers() {
                   <tbody>
                     {filtered.length === 0 ? (
                       <tr>
-                        <td colSpan={6} className="text-muted" style={{ padding: "1.5rem" }}>
+                        <td colSpan={7} className="text-muted" style={{ padding: "1.5rem" }}>
                           {search ? "No users match your search." : "No users found."}
                         </td>
                       </tr>
@@ -333,11 +445,29 @@ export default function ModifyUsers() {
                         <tr key={u.id}>
                           <td>{u.username}</td>
                           <td>{u.email}</td>
+                          <td>
+                            {u.needs_initial_password ? (
+                              <span className="badge badge-warning" title="User accepted invitation but has not set a password yet">Setup incomplete</span>
+                            ) : (
+                              <span className="badge badge-success">Ready</span>
+                            )}
+                          </td>
                           <td>{u.roles.map((r) => r.name).join(", ") || "—"}</td>
                           <td>{u.totp_enabled ? <span className="badge badge-success">Yes</span> : "No"}</td>
                           <td>{u.is_active ? <span className="badge badge-success">Yes</span> : <span className="badge badge-danger">No</span>}</td>
                           <td style={{ textAlign: "right" }}>
-                            <div style={{ display: "flex", gap: "0.5rem", justifyContent: "flex-end" }}>
+                            <div style={{ display: "flex", gap: "0.5rem", justifyContent: "flex-end", flexWrap: "wrap" }}>
+                              {u.needs_initial_password && (
+                                <button
+                                  type="button"
+                                  className="btn-sm"
+                                  disabled={resendWelcomeUserId === u.id}
+                                  onClick={() => resendWelcome(u)}
+                                  title="Send password reset link so they can complete setup"
+                                >
+                                  {resendWelcomeUserId === u.id ? "Sending…" : "Resend welcome"}
+                                </button>
+                              )}
                               <button type="button" className="btn-sm" onClick={() => startEditUser(u)}>Edit</button>
                               <button
                                 type="button"

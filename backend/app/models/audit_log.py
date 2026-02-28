@@ -21,4 +21,5 @@ class AuditLog(Base):
     resource_id = Column(String(36), nullable=True, index=True)
     user_id = Column(String(36), nullable=True, index=True)  # who performed the action (if applicable)
     username = Column(String(255), nullable=True)  # denormalized for display
+    ip_address = Column(String(45), nullable=True)  # client IP when action was performed
     details = Column(Text, nullable=True)  # JSON or free text

@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
-import { Link } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
+import { useAuth } from "../contexts/AuthContext";
 import { api } from "../api/client";
 import ErrorBoundary from "../components/ErrorBoundary";
 
@@ -22,13 +23,49 @@ const OS_LIST: { id: string; label: string; icon: string }[] = [
 type PlanLimits = { max_servers: number; current_servers: number };
 
 export default function ServerAdd() {
+  const { user, isAdmin } = useAuth();
+  const location = useLocation();
   const [deployInfo, setDeployInfo] = useState<{ token: string; api_url: string } | null>(null);
   const [limits, setLimits] = useState<PlanLimits | null>(null);
+  const [hasSshKey, setHasSshKey] = useState<boolean | null>(null);
+  const [hasPlatformKey, setHasPlatformKey] = useState<boolean | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
+  const has2FA = user?.totp_enabled === true;
+  const hasSMS = user?.phone_verified === true;
+  const needsSecurity = !has2FA && !hasSMS;
+  // Admin needs either personal key OR platform key (platform key is generated on Key page)
+  const sshKeyCheckPending = isAdmin && (hasSshKey === null || hasPlatformKey === null);
+  const needsSshKey = isAdmin && !sshKeyCheckPending && hasSshKey === false && hasPlatformKey === false;
+
   useEffect(() => {
+    if (isAdmin && location.pathname === "/server/add") {
+      api.get<{ has_key: boolean }>("/api/users/me/ssh-key").then((d) => setHasSshKey(d.has_key)).catch(() => setHasSshKey(null));
+      api.get<{ has_key: boolean }>("/api/admin/ssh-key").then((d) => setHasPlatformKey(d.has_key)).catch(() => setHasPlatformKey(null));
+    } else if (!isAdmin) {
+      setHasSshKey(true);
+      setHasPlatformKey(null);
+    }
+  }, [isAdmin, location.pathname, location.key]);
+
+  useEffect(() => {
+    const handler = () => {
+      if (document.visibilityState === "visible" && isAdmin && location.pathname === "/server/add") {
+        api.get<{ has_key: boolean }>("/api/users/me/ssh-key").then((d) => setHasSshKey(d.has_key)).catch(() => setHasSshKey(null));
+        api.get<{ has_key: boolean }>("/api/admin/ssh-key").then((d) => setHasPlatformKey(d.has_key)).catch(() => setHasPlatformKey(null));
+      }
+    };
+    document.addEventListener("visibilitychange", handler);
+    return () => document.removeEventListener("visibilitychange", handler);
+  }, [isAdmin, location.pathname]);
+
+  useEffect(() => {
+    if (needsSecurity || needsSshKey || sshKeyCheckPending) {
+      if (!sshKeyCheckPending) setLoading(false);
+      return;
+    }
     let cancelled = false;
     setLoading(true);
     setError(null);
@@ -50,7 +87,7 @@ export default function ServerAdd() {
         if (!cancelled) setLoading(false);
       });
     return () => { cancelled = true; };
-  }, []);
+  }, [needsSecurity, needsSshKey, sshKeyCheckPending]);
 
   const atServerLimit = limits && limits.current_servers >= limits.max_servers;
 
@@ -118,7 +155,7 @@ export default function ServerAdd() {
         <div style={{ marginBottom: "1rem", padding: "0.75rem 1rem", background: atServerLimit ? "rgba(239,68,68,0.1)" : "rgba(45,212,191,0.08)", border: `1px solid ${atServerLimit ? "rgba(239,68,68,0.3)" : "rgba(45,212,191,0.2)"}`, borderRadius: 10, fontSize: "0.9rem" }}>
           {limits.current_servers} of {limits.max_servers} servers
           {atServerLimit && (
-            <span style={{ color: "var(--danger)", marginLeft: "0.5rem" }}>— Limit reached. Upgrade your plan in <Link to="/profile/plan" style={{ color: "var(--accent)" }}>Profile → Plan</Link> to add more servers.</span>
+            <span style={{ color: "var(--danger)", marginLeft: "0.5rem" }}>— Limit reached. Upgrade your plan in <Link to="/plan-billing/plan" style={{ color: "var(--accent)" }}>Plan & Billing</Link> to add more servers.</span>
           )}
         </div>
       )}
@@ -128,15 +165,35 @@ export default function ServerAdd() {
         <p style={{ color: "var(--text-muted)", marginBottom: "1rem", fontSize: "0.95rem" }}>
           Choose your distribution. Click a card to copy the deploy command, then run it on the server (as root or with sudo). The script will install curl and SSH if needed, open port 22, then register the server and install keys.
         </p>
-        {loading ? (
-          <p style={{ color: "var(--text-muted)" }}>Loading deployment token…</p>
+        {needsSecurity ? (
+          <div style={{ padding: "1.5rem", background: "rgba(255,193,7,0.12)", border: "1px solid rgba(255,193,7,0.4)", borderRadius: 10 }}>
+            <p style={{ margin: "0 0 0.75rem", fontWeight: 600, color: "var(--text-primary)" }}>Enable second-layer security first</p>
+            <p style={{ margin: "0 0 1rem", color: "var(--text-secondary)", fontSize: "0.95rem", lineHeight: 1.5 }}>
+              To add a server, you must enable either 2FA (authenticator app) or SMS verification. This protects your account and infrastructure.
+            </p>
+            <Link to="/profile/security" className="primary" style={{ display: "inline-block", padding: "0.5rem 1rem", textDecoration: "none", borderRadius: 8 }}>
+              Go to Profile → Security
+            </Link>
+          </div>
+        ) : needsSshKey ? (
+          <div style={{ padding: "1.5rem", background: "rgba(255,193,7,0.12)", border: "1px solid rgba(255,193,7,0.4)", borderRadius: 10 }}>
+            <p style={{ margin: "0 0 0.75rem", fontWeight: 600, color: "var(--text-primary)" }}>Add your SSH key first</p>
+            <p style={{ margin: "0 0 1rem", color: "var(--text-secondary)", fontSize: "0.95rem", lineHeight: 1.5 }}>
+              To deploy and connect to servers, you need an SSH key. Upload your public key or generate one on the Key page.
+            </p>
+            <Link to="/keys" className="primary" style={{ display: "inline-block", padding: "0.5rem 1rem", textDecoration: "none", borderRadius: 8 }}>
+              Go to Key page
+            </Link>
+          </div>
+        ) : (loading || sshKeyCheckPending) ? (
+          <p style={{ color: "var(--text-muted)" }}>{sshKeyCheckPending ? "Checking SSH key…" : "Loading deployment token…"}</p>
         ) : error ? (
           <p className="error-msg">{error}</p>
         ) : !token ? (
           <p className="error-msg">Deployment token not available.</p>
         ) : atServerLimit ? (
           <p style={{ color: "var(--danger)", padding: "1rem", background: "rgba(239,68,68,0.1)", borderRadius: 8 }}>
-            Server limit reached. Upgrade your plan in <Link to="/profile/plan" style={{ color: "var(--accent)" }}>Profile → Plan</Link> to add more servers. The deploy command will fail until you upgrade.
+            Server limit reached. Upgrade your plan in <Link to="/plan-billing/plan" style={{ color: "var(--accent)" }}>Plan & Billing</Link> to add more servers. The deploy command will fail until you upgrade.
           </p>
         ) : (
           <>
@@ -166,26 +223,6 @@ export default function ServerAdd() {
             </p>
           </>
         )}
-      </div>
-
-      <div className="card">
-        <h2 className="card-subtitle">Requirements</h2>
-        <ul style={{ color: "var(--text-muted)", fontSize: "0.95rem", margin: 0, paddingLeft: "1.25rem" }}>
-          <li>Script installs <code>curl</code> and <code>openssh-server</code> if missing, and allows port 22 in the firewall when possible.</li>
-          <li>Generate the platform SSH key first in <Link to="/profile/keys">Profile → Key</Link> if you have not already.</li>
-        </ul>
-      </div>
-
-      <div className="card" style={{ marginTop: "1.5rem" }}>
-        <h2 className="card-subtitle">If the deploy command shows an error</h2>
-        <p style={{ color: "var(--text-muted)", fontSize: "0.95rem", marginBottom: "0.5rem" }}>
-          If you see <strong>syntax errors</strong>, <strong>command not found</strong>, or <strong>{"Invalid deployment token"}</strong> when running the curl command on the Ubuntu server, the API usually returned an error (e.g. 401) and that response was piped into bash.
-        </p>
-        <ul style={{ color: "var(--text-muted)", fontSize: "0.95rem", margin: 0, paddingLeft: "1.25rem" }}>
-          <li><strong>Invalid or expired token</strong> — Copy a <strong>new</strong> deploy command from this page (click the card again). If the database was reset or the token was recreated, old URLs no longer work.</li>
-          <li><strong>Connection refused / timeout</strong> — The Ubuntu server must reach the API URL (e.g. <code>{apiBase || "http://YOUR_MANAGER_IP:8000"}</code>). From the Ubuntu server run: <code>curl -s -o /dev/null -w {"%{http_code}"} {apiBase || "http://YOUR_IP:8000"}/health</code> — it should return <code>200</code>. Open port 8000 on the manager firewall if needed.</li>
-          <li><strong>Failed to register server</strong> — The script will print the API response. Check that the token is valid and the server can reach the API.</li>
-        </ul>
       </div>
     </div>
     </ErrorBoundary>

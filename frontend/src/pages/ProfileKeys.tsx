@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { Link } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
 import { api, downloadFile } from "../api/client";
 import { useToast } from "../components/Toast";
@@ -36,7 +37,6 @@ export default function ProfileKeys({ embedded }: ProfileKeysProps) {
   };
 
   const fetchMyKey = async () => {
-    if (isAdmin) return;
     setMyKeyLoading(true);
     try {
       const data = await api.get<{ has_key: boolean; public_key?: string; fingerprint?: string; uses_own_key?: boolean }>("/api/users/me/ssh-key");
@@ -54,16 +54,17 @@ export default function ProfileKeys({ embedded }: ProfileKeysProps) {
 
   useEffect(() => {
     fetchMyKey();
-  }, [user?.id, isAdmin]);
+  }, [user?.id]);
 
   const content = (
     <>
       {!embedded && (
         <div className="page-header">
-          <h1>Key</h1>
+          <Link to="/" className="btn-link">← Dashboard</Link>
+          <h1 style={{ marginTop: "0.5rem" }}>Key</h1>
         </div>
       )}
-      {isAdmin && (
+      {isAdmin && !myKey?.uses_own_key && (
         <div className="card" style={{ marginBottom: "1.5rem" }}>
           <h2 className="card-subtitle">Platform SSH key</h2>
           <p style={{ color: "var(--text-muted)", marginBottom: "1rem", fontSize: "0.95rem" }}>
@@ -163,11 +164,15 @@ export default function ProfileKeys({ embedded }: ProfileKeysProps) {
         </div>
       )}
 
-      {!isAdmin && (
+      {isAdmin && myKey?.uses_own_key && (
+        <p style={{ color: "var(--text-muted)", fontSize: "0.9rem", marginBottom: "1rem", padding: "0.75rem 1rem", background: "rgba(255,255,255,0.04)", borderRadius: 8, border: "1px solid var(--border)" }}>
+          Platform SSH key is hidden while you use your own key. Switch to system-generated key below to manage it and download PEM/PPK.
+        </p>
+      )}
       <div className="card">
         <h2 className="card-subtitle">Your SSH key</h2>
         <p style={{ color: "var(--text-muted)", marginBottom: "0.5rem", fontSize: "0.95rem" }}>
-          Use this key to connect to servers an admin has assigned you to. Your role on each server (admin/sudo or user) is set by the admin.
+          {isAdmin ? "Use this key to connect to servers you manage. As admin, you have access to all servers in your tenant." : "Use this key to connect to servers an admin has assigned you to. Your role on each server (admin/sudo or user) is set by the admin."}
         </p>
         <p style={{ color: "var(--text-muted)", marginBottom: "1rem", fontSize: "0.9rem" }}>
           You can either <strong>use the system-generated key</strong> (download PEM or PPK below) or <strong>upload your own SSH public key</strong>. If you upload your own, it will replace the system key and be synced to all assigned servers; use your existing private key to connect (no PEM/PPK download).
@@ -216,6 +221,11 @@ export default function ProfileKeys({ embedded }: ProfileKeysProps) {
 
         <div style={{ marginBottom: "1.5rem" }}>
           <h3 style={{ fontSize: "1rem", marginBottom: "0.5rem" }}>Use your own SSH key</h3>
+          {myKey?.uses_own_key && (
+            <p style={{ color: "var(--text-muted)", fontSize: "0.9rem", marginBottom: "0.5rem" }}>
+              You are using your own key. Update it below or switch to system-generated key to use PEM/PPK downloads.
+            </p>
+          )}
           <p style={{ color: "var(--text-muted)", fontSize: "0.9rem", marginBottom: "0.5rem" }}>Paste your public key (one line, e.g. <code>ssh-rsa AAAA... you@host</code>):</p>
           <textarea
             value={ownKeyInput}
@@ -268,34 +278,40 @@ export default function ProfileKeys({ embedded }: ProfileKeysProps) {
         ) : !myKey?.has_key ? (
           <div>
             <p style={{ color: "var(--text-muted)", fontSize: "0.9rem", marginBottom: "1rem" }}>
-            You don’t have an SSH key yet. Generate a system key (PEM/PPK) or upload your own public key above.
+              You don’t have an SSH key yet. Upload your own public key above, or generate a system key below.
             </p>
             <button
               type="button"
               className="primary"
               disabled={userKeyRegenerating}
-              onClick={async () => {
-                setUserKeyRegenerating(true);
-                setMessage(null);
-                try {
-                  const res = await api.post<{ message?: string; sync_results?: { success: boolean; error?: string }[] }>(
-                    "/api/users/me/ssh-key/regenerate"
-                  );
-                  toast("success", "SSH key generated. Download PEM or PPK below.");
-                  await fetchMyKey();
-                  const sync = res?.sync_results || [];
-                  const fail = sync.filter((r) => !r.success);
-                  if (fail.length > 0) {
-                    setMessage({ type: "error", text: `Sync failed on ${fail.length} server(s): ${fail.map((r) => r.error).join("; ")}` });
-                  }
-                } catch (e) {
-                  setMessage({ type: "error", text: e instanceof Error ? e.message : "Failed to generate key" });
-                } finally {
-                  setUserKeyRegenerating(false);
-                }
+              onClick={() => {
+                setConfirmAction({
+                  msg: "Generate a system SSH key? You will be able to download PEM or PPK to connect to servers.",
+                  fn: async () => {
+                    setUserKeyRegenerating(true);
+                    setMessage(null);
+                    try {
+                      const res = await api.post<{ message?: string; sync_results?: { success: boolean; error?: string }[] }>(
+                        "/api/users/me/ssh-key/regenerate"
+                      );
+                      toast("success", "System key generated. Download PEM or PPK below.");
+                      await fetchMyKey();
+                      const sync = res?.sync_results || [];
+                      const fail = sync.filter((r) => !r.success);
+                      if (fail.length > 0) {
+                        setMessage({ type: "error", text: `Sync failed on ${fail.length} server(s): ${fail.map((r) => r.error).join("; ")}` });
+                      }
+                    } catch (e) {
+                      setMessage({ type: "error", text: e instanceof Error ? e.message : "Failed to generate key" });
+                    } finally {
+                      setUserKeyRegenerating(false);
+                    }
+                  },
+                });
+                setConfirmOpen(true);
               }}
             >
-              {userKeyRegenerating ? "Generating…" : "Generate key"}
+              {userKeyRegenerating ? "Generating…" : "Generate system key"}
             </button>
           </div>
         ) : (
@@ -407,7 +423,6 @@ export default function ProfileKeys({ embedded }: ProfileKeysProps) {
           </div>
         )}
       </div>
-      )}
 
       {message && (
         <p className={message.type === "error" ? "error-msg" : "success-msg"} style={{ marginTop: "1rem" }}>

@@ -1,7 +1,14 @@
 from datetime import datetime
 from decimal import Decimal
 from typing import List, Optional
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, field_validator
+
+from app.core.security import validate_password_strength
+
+
+def _validate_password(v: str) -> str:
+    validate_password_strength(v)
+    return v
 
 
 class SignupRequest(BaseModel):
@@ -10,6 +17,11 @@ class SignupRequest(BaseModel):
     email: EmailStr
     password: str = Field(..., min_length=8)
     accept_terms: bool
+
+    @field_validator("password")
+    @classmethod
+    def validate_password(cls, v: str) -> str:
+        return _validate_password(v)
 
 class SignupResponse(BaseModel):
     message: str
@@ -26,6 +38,11 @@ class ForgotPasswordRequest(BaseModel):
 class ResetPasswordRequest(BaseModel):
     token: str
     new_password: str = Field(..., min_length=8)
+
+    @field_validator("new_password")
+    @classmethod
+    def validate_new_password(cls, v: str) -> str:
+        return _validate_password(v)
 
 class ResendVerificationRequest(BaseModel):
     email: EmailStr
@@ -44,6 +61,7 @@ class PlanResponse(BaseModel):
     is_free: bool
     is_hidden: bool = False
     sort_order: int
+    stripe_price_id: Optional[str] = None
 
     class Config:
         from_attributes = True
@@ -61,6 +79,7 @@ class PlanCreate(BaseModel):
     is_free: bool = False
     is_hidden: bool = False
     sort_order: int = 0
+    stripe_price_id: Optional[str] = Field(None, max_length=255)
 
 
 class PlanUpdate(BaseModel):
@@ -76,6 +95,7 @@ class PlanUpdate(BaseModel):
     is_hidden: Optional[bool] = None
     is_active: Optional[bool] = None
     sort_order: Optional[int] = None
+    stripe_price_id: Optional[str] = Field(None, max_length=255)
 
 
 class SubscriptionResponse(BaseModel):
@@ -95,11 +115,13 @@ class TenantResponse(BaseModel):
     company_name: str
     is_active: bool
     created_at: datetime
+    owner_id: Optional[str] = None
     owner_email: Optional[str] = None
     owner_full_name: Optional[str] = None
     owner_username: Optional[str] = None
     owner_phone: Optional[str] = None
     owner_totp_enabled: Optional[bool] = None
+    owner_sms_verification_enabled: Optional[bool] = None
     owner_email_verified: Optional[bool] = None
     owner_last_seen_at: Optional[datetime] = None
     plan_name: Optional[str] = None
@@ -119,10 +141,19 @@ class TenantCreate(BaseModel):
     password: str = Field(..., min_length=8)
     plan_id: Optional[str] = None
 
+    @field_validator("password")
+    @classmethod
+    def validate_password(cls, v: str) -> str:
+        return _validate_password(v)
+
 
 class TenantUpdate(BaseModel):
     company_name: Optional[str] = Field(None, min_length=2, max_length=255)
     is_active: Optional[bool] = None
+    owner_email: Optional[EmailStr] = None
+    owner_phone: Optional[str] = Field(None, min_length=10, max_length=20, pattern=r"^\+[1-9]\d{8,14}$")
+    owner_totp_enabled: Optional[bool] = None
+    owner_sms_verification_enabled: Optional[bool] = None
 
 
 class TenantPlanAssign(BaseModel):

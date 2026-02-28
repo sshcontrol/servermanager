@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from app.database import get_db
 from app.schemas.user import UserCreate, UserUpdate, ProfileUpdate, PublicKeyUpload, UserResponse, UserListResponse, RoleBrief, ServerAccessItem
+from app.schemas.auth import RequestPhoneVerificationRequest, VerifyPhoneRequest
 from app.services.user_service import UserService
 from app.services import audit_service, server_service, user_key_service, sync_service
 from app.services.platform_key_service import PlatformKeyService
@@ -14,6 +15,7 @@ from app.config import get_settings
 from app.core.auth import get_current_user, RequireUsersRead, RequireUsersWrite, require_superuser
 from app.models import User
 from app.models.ssh_key import UserSSHKey
+from app.models.tenant import UserInvitation
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -28,6 +30,10 @@ def _user_to_response(u: User) -> UserResponse:
         is_active=u.is_active,
         is_superuser=u.is_superuser,
         totp_enabled=u.totp_enabled,
+        phone_verified=getattr(u, "phone_verified", False),
+        sms_verification_enabled=getattr(u, "sms_verification_enabled", False),
+        onboarding_completed=getattr(u, "onboarding_completed", True),
+        needs_initial_password=getattr(u, "needs_initial_password", False),
         created_at=u.created_at,
         roles=[RoleBrief(id=r.id, name=r.name) for r in u.roles],
         server_access=[
@@ -87,8 +93,8 @@ async def update_me(
     db: Annotated[AsyncSession, Depends(get_db)],
     current_user: Annotated[User, Depends(get_current_user)],
 ):
-    """Update current user's username, email, and/or phone."""
-    update_data = UserUpdate(username=data.username, email=data.email, phone=data.phone)
+    """Update current user's username and email. Phone must be set via Profile → Security (request-phone-verification + verify-phone)."""
+    update_data = UserUpdate(username=data.username, email=data.email, phone=None)
     user = await UserService.update_user(db, str(current_user.id), update_data)
     if not user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
@@ -224,6 +230,62 @@ async def download_my_ssh_key(
     raise HTTPException(status_code=400, detail="format must be pem or ppk")
 
 
+# Invitations routes must be before /{user_id} so /invitations is not matched as user_id
+@router.get("/invitations")
+async def list_invitations(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: Annotated[User, Depends(RequireUsersRead)],
+):
+    """List pending invitations for the current tenant."""
+    if not current_user.tenant_id:
+        return {"invitations": []}
+
+    result = await db.execute(
+        select(UserInvitation)
+        .where(UserInvitation.tenant_id == current_user.tenant_id)
+        .order_by(UserInvitation.created_at.desc())
+    )
+    invitations = result.scalars().all()
+    items = []
+    for inv in invitations:
+        inviter_name = None
+        if inv.invited_by:
+            inv_r = await db.execute(select(User).where(User.id == inv.invited_by))
+            inviter = inv_r.scalar_one_or_none()
+            inviter_name = (inviter.full_name or inviter.username) if inviter else None
+        items.append({
+            "id": inv.id,
+            "email": inv.email,
+            "role_name": inv.role_name,
+            "accepted": inv.accepted,
+            "expires_at": inv.expires_at.isoformat() if inv.expires_at else "",
+            "created_at": inv.created_at.isoformat() if inv.created_at else "",
+            "invited_by_name": inviter_name,
+        })
+    return {"invitations": items}
+
+
+@router.delete("/invitations/{invitation_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def cancel_invitation(
+    invitation_id: str,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: Annotated[User, Depends(RequireUsersWrite)],
+):
+    """Cancel a pending invitation."""
+    result = await db.execute(
+        select(UserInvitation).where(
+            UserInvitation.id == invitation_id,
+            UserInvitation.tenant_id == current_user.tenant_id,
+        )
+    )
+    inv = result.scalar_one_or_none()
+    if not inv:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Invitation not found")
+    await db.delete(inv)
+    await db.flush()
+    return None
+
+
 @router.get("/{user_id}", response_model=UserResponse)
 async def get_user(
     user_id: str,
@@ -278,6 +340,82 @@ async def create_user(
     return {**resp.model_dump(), "sync_results": sync_results}
 
 
+@router.post("/{user_id}/request-phone-verification")
+async def admin_request_phone_verification(
+    user_id: str,
+    data: RequestPhoneVerificationRequest,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: Annotated[User, Depends(RequireUsersWrite)],
+):
+    """Admin: send SMS verification code to a phone number for the target user. Use verify-phone to complete."""
+    from app.models.tenant import PhoneVerificationToken
+    from app.models.user import utcnow_naive
+    from datetime import timedelta
+    from sqlalchemy import delete
+    import secrets
+    from app.services import sms_service
+
+    target = await UserService.get_user(db, user_id)
+    if not target:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    if target.tenant_id != current_user.tenant_id and not (current_user.is_superuser and not current_user.tenant_id):
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    code = "".join(secrets.choice("0123456789") for _ in range(4))
+    now = utcnow_naive()
+    expires_at = now + timedelta(minutes=10)
+    await db.execute(delete(PhoneVerificationToken).where(PhoneVerificationToken.user_id == user_id))
+    await db.flush()
+    token = PhoneVerificationToken(user_id=user_id, phone=data.phone, code=code, expires_at=expires_at)
+    db.add(token)
+    await db.flush()
+    sent, _ = await sms_service.send_sms(db, data.phone, f"Your SSHCONTROL verification code is: {code}")
+    if not sent:
+        raise HTTPException(status_code=503, detail="Could not send SMS. Check SMS configuration.")
+    return {"message": "Verification code sent."}
+
+
+@router.post("/{user_id}/verify-phone")
+async def admin_verify_phone(
+    user_id: str,
+    data: VerifyPhoneRequest,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: Annotated[User, Depends(RequireUsersWrite)],
+):
+    """Admin: verify phone with code and set user's phone (verified)."""
+    from app.models.tenant import PhoneVerificationToken
+    from app.models.user import utcnow_naive
+    from sqlalchemy import select, delete
+
+    target = await UserService.get_user(db, user_id)
+    if not target:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    if target.tenant_id != current_user.tenant_id and not (current_user.is_superuser and not current_user.tenant_id):
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    result = await db.execute(
+        select(PhoneVerificationToken).where(
+            PhoneVerificationToken.user_id == user_id,
+            PhoneVerificationToken.phone == data.phone,
+        ).order_by(PhoneVerificationToken.created_at.desc()).limit(1)
+    )
+    token_row = result.scalar_one_or_none()
+    if not token_row:
+        raise HTTPException(status_code=400, detail="No verification code found. Request a new one.")
+    if utcnow_naive() > token_row.expires_at:
+        await db.execute(delete(PhoneVerificationToken).where(PhoneVerificationToken.id == token_row.id))
+        await db.flush()
+        raise HTTPException(status_code=400, detail="Verification code expired. Request a new one.")
+    if token_row.code != data.code.strip():
+        raise HTTPException(status_code=400, detail="Invalid verification code.")
+
+    target.phone = data.phone
+    target.phone_verified = True
+    await db.execute(delete(PhoneVerificationToken).where(PhoneVerificationToken.id == token_row.id))
+    await db.flush()
+    return {"message": "Phone verified."}
+
+
 @router.patch("/{user_id}")
 async def update_user(
     user_id: str,
@@ -285,6 +423,13 @@ async def update_user(
     db: Annotated[AsyncSession, Depends(get_db)],
     current_user: Annotated[User, Depends(RequireUsersWrite)],
 ):
+    target = await UserService.get_user(db, user_id)
+    if not target:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    if data.phone is not None and getattr(target, "phone_verified", False):
+        is_platform_superadmin = current_user.is_superuser and current_user.tenant_id is None
+        if not is_platform_superadmin:
+            raise HTTPException(status_code=403, detail="Phone is verified and can only be changed by platform administrator.")
     user = await UserService.update_user(db, user_id, data)
     if not user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
@@ -342,6 +487,42 @@ async def delete_user(
     )
 
 
+@router.post("/{user_id}/resend-welcome")
+async def resend_welcome(
+    user_id: str,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    current_user: Annotated[User, Depends(RequireUsersWrite)],
+):
+    """Send a password reset email to a user who accepted an invitation but never completed the welcome flow.
+    Only works for users with needs_initial_password=True in the same tenant."""
+    target = await UserService.get_user(db, user_id)
+    if not target:
+        raise HTTPException(status_code=404, detail="User not found")
+    if target.tenant_id != current_user.tenant_id:
+        raise HTTPException(status_code=404, detail="User not found")
+    if not getattr(target, "needs_initial_password", False):
+        raise HTTPException(
+            status_code=400,
+            detail="User has already completed setup. Use Forgot password on the login page instead.",
+        )
+    from app.services.email_service import send_password_reset_email
+    try:
+        await send_password_reset_email(
+            db, str(target.id), target.email,
+            target.full_name or target.username,
+        )
+    except Exception as e:
+        logger.warning("Resend welcome email failed: %s", e)
+        raise HTTPException(status_code=500, detail="Failed to send email. Check email configuration.")
+    await audit_service.log(
+        db, "resend_welcome",
+        resource_type="user", resource_id=user_id,
+        user_id=str(current_user.id), username=current_user.username,
+        details=f"email={target.email}",
+    )
+    return {"message": f"Password reset link sent to {target.email}."}
+
+
 # ─── Invitations ──────────────────────────────────────────────────────────────
 
 from pydantic import BaseModel as _BM, EmailStr as _ES, Field as _F
@@ -354,16 +535,6 @@ import secrets
 class InviteUserRequest(_BM):
     email: _ES
     role_name: str = _F(default="user", max_length=50)
-
-
-class InvitationResponse(_BM):
-    id: str
-    email: str
-    role_name: str
-    accepted: bool
-    expires_at: str
-    created_at: str
-    invited_by_name: str | None = None
 
 
 INVITE_TOKEN_HOURS = 72
@@ -382,8 +553,25 @@ async def invite_user(
     from app.services.tenant_service import TenantService
     await TenantService.check_user_limit(db, current_user.tenant_id, include_pending_invitations=True)
 
-    existing_user = await db.execute(select(User).where(User.email == data.email))
-    if existing_user.scalar_one_or_none():
+    existing_user_r = await db.execute(select(User).where(User.email == data.email))
+    existing_user = existing_user_r.scalar_one_or_none()
+    if existing_user:
+        # User exists: allow re-invite only if they never completed onboarding (same tenant)
+        if (
+            existing_user.tenant_id == current_user.tenant_id
+            and not getattr(existing_user, "onboarding_completed", True)
+            and getattr(existing_user, "needs_initial_password", False)
+        ):
+            # Send password reset so they can set a password and complete welcome
+            from app.services.email_service import send_password_reset_email
+            try:
+                await send_password_reset_email(
+                    db, str(existing_user.id), existing_user.email,
+                    existing_user.full_name or existing_user.username,
+                )
+            except Exception as e:
+                logger.warning("Resend welcome email failed: %s", e)
+            return {"message": f"Password reset link sent to {data.email}. They can set a password and complete setup."}
         raise HTTPException(status_code=409, detail="A user with this email already exists")
 
     existing_invite = await db.execute(
@@ -450,57 +638,3 @@ async def invite_user(
         details=f"email={data.email} role={data.role_name}",
     )
     return {"message": f"Invitation sent to {data.email}", "invitation_id": invitation.id}
-
-
-@router.get("/invitations")
-async def list_invitations(
-    db: Annotated[AsyncSession, Depends(get_db)],
-    current_user: Annotated[User, Depends(RequireUsersRead)],
-):
-    """List pending invitations for the current tenant."""
-    if not current_user.tenant_id:
-        return {"invitations": []}
-
-    result = await db.execute(
-        select(UserInvitation)
-        .where(UserInvitation.tenant_id == current_user.tenant_id)
-        .order_by(UserInvitation.created_at.desc())
-    )
-    invitations = result.scalars().all()
-    items = []
-    for inv in invitations:
-        inviter_name = None
-        if inv.invited_by:
-            inv_r = await db.execute(select(User).where(User.id == inv.invited_by))
-            inviter = inv_r.scalar_one_or_none()
-            inviter_name = (inviter.full_name or inviter.username) if inviter else None
-        items.append(InvitationResponse(
-            id=inv.id,
-            email=inv.email,
-            role_name=inv.role_name,
-            accepted=inv.accepted,
-            expires_at=inv.expires_at.isoformat() if inv.expires_at else "",
-            created_at=inv.created_at.isoformat() if inv.created_at else "",
-            invited_by_name=inviter_name,
-        ))
-    return {"invitations": items}
-
-
-@router.delete("/invitations/{invitation_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def cancel_invitation(
-    invitation_id: str,
-    db: Annotated[AsyncSession, Depends(get_db)],
-    current_user: Annotated[User, Depends(RequireUsersWrite)],
-):
-    """Cancel a pending invitation."""
-    result = await db.execute(
-        select(UserInvitation).where(
-            UserInvitation.id == invitation_id,
-            UserInvitation.tenant_id == current_user.tenant_id,
-        )
-    )
-    inv = result.scalar_one_or_none()
-    if not inv:
-        raise HTTPException(status_code=404, detail="Invitation not found")
-    await db.delete(inv)
-    await db.flush()

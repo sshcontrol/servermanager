@@ -28,9 +28,13 @@ async def get_history(
     limit: int = Query(100, ge=1, le=500),
     action: str | None = Query(None, description="Filter by action"),
 ):
-    """Return audit log entries for the History page (admin only)."""
-    entries = await audit_service.get_logs(db, skip=skip, limit=limit, action=action)
-    total = await audit_service.get_logs_count(db, action=action)
+    """Return audit log entries for the History page (admin only). Shows this admin's actions and actions by users in their tenant."""
+    if current_user.tenant_id:
+        entries = await audit_service.get_logs(db, skip=skip, limit=limit, action=action, tenant_id=str(current_user.tenant_id))
+        total = await audit_service.get_logs_count(db, action=action, tenant_id=str(current_user.tenant_id))
+    else:
+        entries = await audit_service.get_logs(db, skip=skip, limit=limit, action=action, user_id=str(current_user.id))
+        total = await audit_service.get_logs_count(db, action=action, user_id=str(current_user.id))
     return {
         "entries": [
             {
@@ -41,6 +45,7 @@ async def get_history(
                 "resource_id": e.resource_id,
                 "user_id": e.user_id,
                 "username": e.username,
+                "ip_address": getattr(e, "ip_address", None),
                 "details": e.details,
             }
             for e in entries

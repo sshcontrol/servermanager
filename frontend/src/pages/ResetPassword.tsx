@@ -2,6 +2,8 @@ import { useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { api } from "../api/client";
 import Logo from "../components/Logo";
+import { validatePassword } from "../utils/password";
+import PasswordField from "../components/PasswordField";
 import "./Login.css";
 
 export default function ResetPassword() {
@@ -16,6 +18,11 @@ export default function ResetPassword() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
+    const pwdErr = validatePassword(password);
+    if (pwdErr) {
+      setError(pwdErr);
+      return;
+    }
     if (password !== confirmPassword) {
       setError("Passwords do not match");
       return;
@@ -80,10 +87,13 @@ export default function ResetPassword() {
             </div>
           ) : (
             <form onSubmit={handleSubmit} className="login-form">
-              <div className="form-group">
-                <label htmlFor="password">New Password</label>
-                <input id="password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} required placeholder="Min 8 characters" minLength={8} autoComplete="new-password" />
-              </div>
+              <PasswordField
+                id="password"
+                value={password}
+                onChange={setPassword}
+                label="New Password"
+                placeholder="Enter new password"
+              />
               <div className="form-group">
                 <label htmlFor="confirmPassword">Confirm Password</label>
                 <input id="confirmPassword" type="password" value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} required placeholder="Repeat password" autoComplete="new-password" />

@@ -22,6 +22,7 @@ class Plan(Base):
     is_active = Column(Boolean, default=True, nullable=False)
     is_hidden = Column(Boolean, default=False, nullable=False)
     sort_order = Column(Integer, default=0, nullable=False)
+    stripe_price_id = Column(String(255), nullable=True)  # Stripe Price ID for checkout
     created_at = Column(DateTime, default=utcnow_naive, nullable=False)
     updated_at = Column(DateTime, default=utcnow_naive, onupdate=utcnow_naive, nullable=False)
 
@@ -34,6 +35,10 @@ class Tenant(Base):
     id = Column(String(36), primary_key=True, default=generate_uuid)
     company_name = Column(String(255), nullable=False)
     is_active = Column(Boolean, default=True, nullable=False)
+    stripe_customer_id = Column(String(255), nullable=True)
+    billing_address = Column(Text, nullable=True)  # JSON: {line1, line2, city, state, postal_code, country}
+    billing_email = Column(String(255), nullable=True)
+    receive_invoices = Column(Boolean, default=True, nullable=False)
     created_at = Column(DateTime, default=utcnow_naive, nullable=False)
     updated_at = Column(DateTime, default=utcnow_naive, onupdate=utcnow_naive, nullable=False)
 
@@ -56,6 +61,9 @@ class Subscription(Base):
     is_active = Column(Boolean, default=True, nullable=False)
     starts_at = Column(DateTime, nullable=False, default=utcnow_naive)
     expires_at = Column(DateTime, nullable=True)
+    stripe_subscription_id = Column(String(255), nullable=True)
+    auto_renew = Column(Boolean, default=False, nullable=False)
+    renewal_reminder_sent_at = Column(DateTime, nullable=True)  # When we last sent a renewal reminder
     created_at = Column(DateTime, default=utcnow_naive, nullable=False)
 
     tenant = relationship("Tenant", back_populates="subscriptions")
@@ -94,6 +102,42 @@ class DestructiveVerificationToken(Base):
     target_id = Column(String(36), nullable=False, index=True)
     code = Column(String(10), nullable=False)
     expires_at = Column(DateTime, nullable=False)
+    created_at = Column(DateTime, default=utcnow_naive, nullable=False)
+
+
+class PhoneVerificationToken(Base):
+    """4-digit code sent via SMS for verifying phone number when user adds/changes it."""
+    __tablename__ = "phone_verification_tokens"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    phone = Column(String(20), nullable=False)
+    code = Column(String(10), nullable=False)
+    expires_at = Column(DateTime, nullable=False)
+    created_at = Column(DateTime, default=utcnow_naive, nullable=False)
+
+
+class LoginSmsToken(Base):
+    """4-digit code sent via SMS for login when user has sms_verification_enabled."""
+    __tablename__ = "login_sms_tokens"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    code = Column(String(10), nullable=False)
+    expires_at = Column(DateTime, nullable=False)
+    created_at = Column(DateTime, default=utcnow_naive, nullable=False)
+
+
+class AccountClosureToken(Base):
+    """Token for account closure via email link. User verifies password/2FA/SMS, then receives link."""
+    __tablename__ = "account_closure_tokens"
+
+    id = Column(String(36), primary_key=True, default=generate_uuid)
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    token = Column(String(128), unique=True, nullable=False, index=True)
+    action = Column(String(50), nullable=False, index=True)  # close_user, close_tenant
+    expires_at = Column(DateTime, nullable=False)
+    used = Column(Boolean, default=False, nullable=False)
     created_at = Column(DateTime, default=utcnow_naive, nullable=False)
 
 

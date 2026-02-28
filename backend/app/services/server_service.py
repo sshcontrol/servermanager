@@ -16,6 +16,31 @@ from app.models.deployment import DeploymentToken
 from app.models.user import User
 from app.models.ssh_key import UserSSHKey
 from app.models.platform_key import PlatformSSHKey
+from app.models.association import user_roles
+from app.models.role import Role
+from app.models.tenant import Tenant
+
+
+async def get_tenant_owner_public_key(db: AsyncSession, tenant_id: str | None) -> str | None:
+    """Return the tenant owner's uploaded SSH public key, or None. Used as fallback when no platform key exists."""
+    if not tenant_id:
+        return None
+    r = await db.execute(
+        select(Tenant.owner_id).where(Tenant.id == tenant_id)
+    )
+    row = r.fetchone()
+    if not row or not row[0]:
+        return None
+    owner_id = row[0]
+    r2 = await db.execute(
+        select(UserSSHKey.public_key)
+        .where(UserSSHKey.user_id == owner_id)
+        .where(UserSSHKey.public_key.isnot(None))
+        .order_by(UserSSHKey.created_at.desc())
+        .limit(1)
+    )
+    key_row = r2.fetchone()
+    return key_row[0].strip() if key_row and key_row[0] else None
 
 
 async def get_deployment_token(db: AsyncSession, tenant_id: str | None = None) -> str | None:
@@ -39,9 +64,22 @@ async def verify_deployment_token(db: AsyncSession, token: str) -> DeploymentTok
 
 
 async def register_server(db: AsyncSession, hostname: str, ip_address: str | None, tenant_id: str | None = None) -> Server:
+    """Register or re-register a server. If a server with the same hostname exists for this tenant, update it and return it (avoids duplicates when deploy runs multiple times)."""
+    hostname_clean = (hostname or "").strip()
+    if not hostname_clean:
+        hostname_clean = "unknown"
+    r = await db.execute(
+        select(Server).where(Server.tenant_id == tenant_id, Server.hostname == hostname_clean).limit(1)
+    )
+    existing = r.scalar_one_or_none()
+    if existing:
+        existing.ip_address = ip_address or existing.ip_address
+        existing.status = "active"
+        await db.flush()
+        return existing
     server = Server(
         id=str(uuid.uuid4()),
-        hostname=hostname,
+        hostname=hostname_clean,
         ip_address=ip_address or None,
         status="active",
         tenant_id=tenant_id,
@@ -119,20 +157,26 @@ async def get_my_groups_and_servers(db: AsyncSession, user_id: str, is_superuser
     from app.models.user_group import UserGroup
 
     user_groups: list[dict] = []
-    r_ug = await db.execute(
+    q_ug = (
         select(UserGroup.id, UserGroup.name)
         .join(user_group_members, user_group_members.c.user_group_id == UserGroup.id)
         .where(user_group_members.c.user_id == user_id)
     )
+    if tenant_id is not None:
+        q_ug = q_ug.where(UserGroup.tenant_id == tenant_id)
+    r_ug = await db.execute(q_ug)
     for row in r_ug.all():
         user_groups.append({"id": row[0], "name": row[1]})
 
     server_groups: list[dict] = []
-    r_sg = await db.execute(
+    q_sg = (
         select(ServerGroup.id, ServerGroup.name, ServerGroupAccess.role)
         .join(ServerGroupAccess, ServerGroupAccess.server_group_id == ServerGroup.id)
         .where(ServerGroupAccess.user_id == user_id)
     )
+    if tenant_id is not None:
+        q_sg = q_sg.where(ServerGroup.tenant_id == tenant_id)
+    r_sg = await db.execute(q_sg)
     for row in r_sg.all():
         server_groups.append({"id": row[0], "name": row[1], "role": row[2]})
 
@@ -156,20 +200,26 @@ async def get_my_groups_and_servers(db: AsyncSession, user_id: str, is_superuser
         r1 = await db.execute(select(ServerAccess.server_id).where(ServerAccess.user_id == user_id))
         for (sid,) in r1.all():
             source_by_server.setdefault(sid, []).append(("direct", None))
-        r2 = await db.execute(
+        q2 = (
             select(server_group_servers.c.server_id, ServerGroup.name)
             .join(ServerGroupAccess, ServerGroupAccess.server_group_id == server_group_servers.c.server_group_id)
             .join(ServerGroup, ServerGroup.id == server_group_servers.c.server_group_id)
             .where(ServerGroupAccess.user_id == user_id)
         )
+        if tenant_id is not None:
+            q2 = q2.where(ServerGroup.tenant_id == tenant_id)
+        r2 = await db.execute(q2)
         for sid, gname in r2.all():
             source_by_server.setdefault(sid, []).append(("server_group", gname))
-        r3 = await db.execute(
+        q3 = (
             select(ServerUserGroupAccess.server_id, UserGroup.name)
             .join(user_group_members, user_group_members.c.user_group_id == ServerUserGroupAccess.user_group_id)
             .join(UserGroup, UserGroup.id == ServerUserGroupAccess.user_group_id)
             .where(user_group_members.c.user_id == user_id)
         )
+        if tenant_id is not None:
+            q3 = q3.where(UserGroup.tenant_id == tenant_id)
+        r3 = await db.execute(q3)
         for sid, gname in r3.all():
             source_by_server.setdefault(sid, []).append(("user_group", gname))
         servers = []
@@ -300,9 +350,8 @@ async def check_server_connection(server: Server) -> tuple[str, str]:
 async def get_authorized_keys_content(db: AsyncSession, server_id: str) -> str:
     """
     Build authorized_keys file content for root on this server.
-    Only includes the platform SSH key (admin management key).
+    Uses platform SSH key if available; otherwise falls back to tenant owner's uploaded key.
     Individual users connect via their own Linux accounts (per-user keys managed by sync-users.py).
-    This prevents all panel users from getting unintended root SSH access.
     """
     server = await get_server(db, server_id)
     tenant_id = server.tenant_id if server else None
@@ -311,9 +360,12 @@ async def get_authorized_keys_content(db: AsyncSession, server_id: str) -> str:
     else:
         r = await db.execute(select(PlatformSSHKey).where(PlatformSSHKey.tenant_id.is_(None)).limit(1))
     platform_key = r.scalar_one_or_none()
-    if not platform_key or not platform_key.public_key:
+    if platform_key and platform_key.public_key:
+        pk = platform_key.public_key.strip()
+    else:
+        pk = await get_tenant_owner_public_key(db, tenant_id)
+    if not pk:
         return ""
-    pk = platform_key.public_key.strip()
     opts = "no-port-forwarding,no-X11-forwarding,no-agent-forwarding "
     return opts + pk + "\n"
 
@@ -322,18 +374,36 @@ async def get_users_keys_for_server(db: AsyncSession, server_id: str) -> list[di
     """
     Return list of { "username": str, "authorized_key_line": str, "allowed_ips": list[str] } for each user with access and a key.
     allowed_ips: when IP whitelist is enabled, only these IPs can SSH as this user to the server; empty = no restriction.
-    Includes access via direct, server group, and user group.
+    Includes access via direct, server group, user group, and tenant admins (superusers).
     """
     from app.services import security_service
 
     server = await get_server(db, server_id)
     tenant_id = server.tenant_id if server else None
-    user_roles = await _get_users_with_access_to_server(db, server_id)
-    if not user_roles:
+    user_roles_list = await _get_users_with_access_to_server(db, server_id)
+    existing_ids = {uid for uid, _ in user_roles_list}
+    # Include tenant admins (is_superuser OR admin role) with admin/sudo on all servers in their tenant
+    if tenant_id:
+        admin_role_ids = select(Role.id).where(Role.name == "admin")
+        r_admin = await db.execute(
+            select(User.id).where(
+                User.tenant_id == tenant_id,
+                User.is_active == True,  # noqa: E712
+                (
+                    (User.is_superuser == True)  # noqa: E712
+                    | (User.id.in_(select(user_roles.c.user_id).where(user_roles.c.role_id.in_(admin_role_ids))))
+                ),
+            )
+        )
+        for (uid,) in r_admin.all():
+            if uid not in existing_ids:
+                user_roles_list.append((uid, "admin"))
+                existing_ids.add(uid)
+    if not user_roles_list:
         return []
-    user_ids = [uid for uid, _ in user_roles]
+    user_ids = [uid for uid, _ in user_roles_list]
     allowed_per_user = await security_service.get_allowed_ips_per_user(db, user_ids, tenant_id=tenant_id)
-    role_by_user = dict(user_roles)
+    role_by_user = dict(user_roles_list)
     r = await db.execute(
         select(User, UserSSHKey)
         .outerjoin(UserSSHKey, User.id == UserSSHKey.user_id)

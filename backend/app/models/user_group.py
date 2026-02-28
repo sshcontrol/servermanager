@@ -1,25 +1,23 @@
 """User groups: group of users; a user group can be assigned to a server (all members get that role on the server)."""
 
-from sqlalchemy import Column, String, Text, DateTime, ForeignKey, Table
+from sqlalchemy import Column, String, Text, DateTime, ForeignKey, Table, UniqueConstraint
 from sqlalchemy.orm import relationship
 from app.database import Base
-from app.models.user import utcnow_naive
-import uuid
-
-
-def generate_uuid():
-    return str(uuid.uuid4())
+from app.models.utils import generate_uuid, utcnow_naive
 
 
 class UserGroup(Base):
     __tablename__ = "user_groups"
+    __table_args__ = (UniqueConstraint("tenant_id", "name", name="uq_user_groups_tenant_name"),)
 
     id = Column(String(36), primary_key=True, default=generate_uuid)
-    name = Column(String(255), nullable=False, unique=True, index=True)
+    tenant_id = Column(String(36), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=True, index=True)
+    name = Column(String(255), nullable=False, index=True)
     description = Column(Text, nullable=True)
     created_at = Column(DateTime, default=utcnow_naive, nullable=False)
     updated_at = Column(DateTime, default=utcnow_naive, onupdate=utcnow_naive, nullable=False)
 
+    tenant = relationship("Tenant", backref="user_groups")
     members = relationship(
         "User",
         secondary="user_group_members",

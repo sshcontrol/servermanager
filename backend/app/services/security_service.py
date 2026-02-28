@@ -3,6 +3,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.security import IpWhitelistSettings, IpWhitelistEntry
+from app.models.user import User
 
 
 async def _get_settings_row(db: AsyncSession, tenant_id: str | None) -> IpWhitelistSettings | None:
@@ -106,8 +107,12 @@ async def list_whitelist_entries(db: AsyncSession, tenant_id: str | None = None)
 
 async def add_whitelist_entry(
     db: AsyncSession, ip_address: str, scope: str, user_id: str | None = None, tenant_id: str | None = None
-) -> IpWhitelistEntry:
-    """Add a whitelist entry scoped to tenant."""
+) -> IpWhitelistEntry | None:
+    """Add a whitelist entry scoped to tenant. Returns None if user_id provided but user does not belong to tenant."""
+    if scope == "user" and user_id and tenant_id:
+        user = await db.get(User, user_id)
+        if not user or user.tenant_id != tenant_id:
+            return None
     entry = IpWhitelistEntry(
         ip_address=ip_address.strip(),
         scope=scope,
@@ -122,8 +127,8 @@ async def add_whitelist_entry(
 async def update_whitelist_entry(
     db: AsyncSession, entry_id: str, ip_address: str | None = None, scope: str | None = None, user_id: str | None = None,
     tenant_id: str | None = None,
-) -> IpWhitelistEntry | None:
-    """Update an entry. Validates tenant ownership."""
+) -> IpWhitelistEntry | str | None:
+    """Update an entry. Validates tenant ownership. Returns 'invalid_user' if user_id does not belong to tenant."""
     q = select(IpWhitelistEntry).where(IpWhitelistEntry.id == entry_id)
     if tenant_id:
         q = q.where(IpWhitelistEntry.tenant_id == tenant_id)
@@ -131,6 +136,16 @@ async def update_whitelist_entry(
     entry = r.scalar_one_or_none()
     if not entry:
         return None
+    # Determine effective user_id after update
+    effective_user_id = None
+    if scope is not None:
+        effective_user_id = user_id if scope == "user" else None
+    elif user_id is not None and entry.scope == "user":
+        effective_user_id = user_id
+    if effective_user_id and tenant_id:
+        user = await db.get(User, effective_user_id)
+        if not user or user.tenant_id != tenant_id:
+            return "invalid_user"
     if ip_address is not None:
         entry.ip_address = ip_address.strip()
     if scope is not None:

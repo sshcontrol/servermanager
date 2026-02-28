@@ -15,12 +15,14 @@ type PlanItem = {
   is_hidden: boolean;
   is_active?: boolean;
   sort_order: number;
+  stripe_price_id?: string | null;
 };
 
 const emptyPlan = {
   name: "", description: "", price: 0, currency: "USD",
   duration_days: 30, duration_label: "1 month",
   max_users: 3, max_servers: 5, is_free: false, is_hidden: false, sort_order: 0,
+  stripe_price_id: "",
 };
 
 export default function SuperadminPlans() {
@@ -58,6 +60,7 @@ export default function SuperadminPlans() {
       name: p.name, description: p.description || "", price: p.price, currency: p.currency,
       duration_days: p.duration_days, duration_label: p.duration_label,
       max_users: p.max_users, max_servers: p.max_servers, is_free: p.is_free, is_hidden: p.is_hidden, sort_order: p.sort_order,
+      stripe_price_id: p.stripe_price_id || "",
     });
     setShowForm(true);
   };
@@ -174,6 +177,14 @@ export default function SuperadminPlans() {
                 <label>Max Servers</label>
                 <input type="number" min="1" value={form.max_servers} onChange={(e) => update("max_servers", parseInt(e.target.value) || 1)} />
               </div>
+            </div>
+            <div className="form-group">
+              <label>Stripe Price ID (for paid plans)</label>
+              <input
+                value={form.stripe_price_id || ""}
+                onChange={(e) => update("stripe_price_id", e.target.value)}
+                placeholder="price_xxx from Stripe Dashboard"
+              />
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1rem" }}>
               <div className="form-group">

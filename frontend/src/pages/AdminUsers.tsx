@@ -1,6 +1,8 @@
 import { useState, useEffect } from "react";
 import { api } from "../api/client";
-import { COUNTRY_CODES, toE164, isValidE164 } from "../lib/phone";
+import { normalizeToE164, isValidE164 } from "../lib/phone";
+import { validatePassword } from "../utils/password";
+import PasswordField from "../components/PasswordField";
 
 type UserRow = {
   id: string;
@@ -34,13 +36,16 @@ export default function AdminUsers() {
     email: "",
     username: "",
     password: "",
-    phoneCountryCode: "+1",
-    phoneNumber: "",
+    phone: "",
     role_ids: [] as string[],
   });
   const [editingUserId, setEditingUserId] = useState<string | null>(null);
   const [editRoleIds, setEditRoleIds] = useState<string[]>([]);
   const [editLoading, setEditLoading] = useState(false);
+  const [pendingPhoneUserId, setPendingPhoneUserId] = useState<string | null>(null);
+  const [pendingPhone, setPendingPhone] = useState("");
+  const [phoneVerifyCode, setPhoneVerifyCode] = useState("");
+  const [phoneVerifyLoading, setPhoneVerifyLoading] = useState(false);
   const limit = 20;
 
   const loadUsers = async () => {
@@ -79,13 +84,14 @@ export default function AdminUsers() {
       setMessage({ type: "error", text: "Email, username and password are required." });
       return;
     }
-    const phone = createForm.phoneNumber.trim() ? toE164(createForm.phoneCountryCode, createForm.phoneNumber) : null;
+    const phone = createForm.phone.trim() ? normalizeToE164(createForm.phone) : null;
     if (phone && !isValidE164(phone)) {
       setMessage({ type: "error", text: "Please enter a valid phone number with country code." });
       return;
     }
-    if (createForm.password.length < 8) {
-      setMessage({ type: "error", text: "Password must be at least 8 characters." });
+    const pwdErr = validatePassword(createForm.password);
+    if (pwdErr) {
+      setMessage({ type: "error", text: pwdErr });
       return;
     }
     setCreateLoading(true);
@@ -96,16 +102,44 @@ export default function AdminUsers() {
         password: createForm.password,
         role_ids: createForm.role_ids,
       };
-      if (phone) payload.phone = phone;
-      await api.post("/api/users", payload);
-      setMessage({ type: "success", text: "User created successfully." });
-      setCreateForm({ email: "", username: "", password: "", phoneCountryCode: "+1", phoneNumber: "", role_ids: [] });
-      setShowCreateForm(false);
-      loadUsers();
+      const res = await api.post<{ id: string }>("/api/users", payload);
+      if (phone) {
+        setPendingPhoneUserId(res.id);
+        setPendingPhone(phone);
+        setPhoneVerifyCode("");
+        await api.post(`/api/users/${res.id}/request-phone-verification`, { phone });
+        setMessage({ type: "success", text: "User created. Verification code sent to phone. Enter the code to complete." });
+      } else {
+        setMessage({ type: "success", text: "User created successfully." });
+        setCreateForm({ email: "", username: "", password: "", phone: "", role_ids: [] });
+        setShowCreateForm(false);
+        loadUsers();
+      }
     } catch (e) {
       setMessage({ type: "error", text: e instanceof Error ? e.message : "Failed to create user" });
     } finally {
       setCreateLoading(false);
+    }
+  };
+
+  const handleVerifyPhoneForNewUser = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!pendingPhoneUserId || !pendingPhone || phoneVerifyCode.length < 4) return;
+    setMessage(null);
+    setPhoneVerifyLoading(true);
+    try {
+      await api.post(`/api/users/${pendingPhoneUserId}/verify-phone`, { phone: pendingPhone, code: phoneVerifyCode });
+      setMessage({ type: "success", text: "User created and phone verified." });
+      setPendingPhoneUserId(null);
+      setPendingPhone("");
+      setPhoneVerifyCode("");
+      setCreateForm({ email: "", username: "", password: "", phone: "", role_ids: [] });
+      setShowCreateForm(false);
+      loadUsers();
+    } catch (e) {
+      setMessage({ type: "error", text: e instanceof Error ? e.message : "Verification failed" });
+    } finally {
+      setPhoneVerifyLoading(false);
     }
   };
 
@@ -171,7 +205,49 @@ export default function AdminUsers() {
         </p>
       )}
 
-      {showCreateForm && (
+      {pendingPhoneUserId && (
+        <div className="card" style={{ marginBottom: "1.5rem" }}>
+          <h2 style={{ fontSize: "1.1rem", marginBottom: "1rem" }}>Verify phone number</h2>
+          <p style={{ color: "var(--text-muted)", marginBottom: "1rem" }}>
+            A verification code was sent to {pendingPhone}. Ask the user for the code and enter it below.
+          </p>
+          <form onSubmit={handleVerifyPhoneForNewUser}>
+            <div className="form-group">
+              <label htmlFor="phone-verify-code">Verification code</label>
+              <input
+                id="phone-verify-code"
+                type="text"
+                value={phoneVerifyCode}
+                onChange={(e) => setPhoneVerifyCode(e.target.value.replace(/\D/g, "").slice(0, 8))}
+                placeholder="0000"
+                maxLength={8}
+                inputMode="numeric"
+              />
+            </div>
+            <div style={{ display: "flex", gap: "0.5rem" }}>
+              <button type="submit" className="primary" disabled={phoneVerifyLoading || phoneVerifyCode.length < 4}>
+                {phoneVerifyLoading ? "Verifying…" : "Verify & complete"}
+              </button>
+              <button
+                type="button"
+                className="secondary"
+                onClick={() => {
+                  setPendingPhoneUserId(null);
+                  setPendingPhone("");
+                  setPhoneVerifyCode("");
+                  setCreateForm((f) => ({ ...f, phone: "" }));
+                  setShowCreateForm(false);
+                  loadUsers();
+                }}
+              >
+                Skip verification
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {showCreateForm && !pendingPhoneUserId && (
         <div className="card" style={{ marginBottom: "1.5rem" }}>
           <h2 style={{ fontSize: "1.1rem", marginBottom: "1rem" }}>Create user</h2>
           <form onSubmit={handleCreateUser}>
@@ -201,38 +277,22 @@ export default function AdminUsers() {
             </div>
             <div className="form-group">
               <label htmlFor="create-phone">Phone <span style={{ color: "var(--text-muted)", fontWeight: "normal" }}>— optional</span></label>
-              <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap", alignItems: "center" }}>
-                <select
-                  id="create-phone"
-                  value={createForm.phoneCountryCode}
-                  onChange={(e) => setCreateForm((f) => ({ ...f, phoneCountryCode: e.target.value }))}
-                  style={{ minWidth: "120px" }}
-                >
-                  {COUNTRY_CODES.map((c) => (
-                    <option key={c.code} value={c.code}>{c.label}</option>
-                  ))}
-                </select>
-                <input
-                  type="tel"
-                  value={createForm.phoneNumber}
-                  onChange={(e) => setCreateForm((f) => ({ ...f, phoneNumber: e.target.value.replace(/\D/g, "").slice(0, 15) }))}
-                  placeholder="2345678900"
-                  style={{ flex: "1", minWidth: "140px" }}
-                />
-              </div>
-            </div>
-            <div className="form-group">
-              <label htmlFor="create-password">Password</label>
               <input
-                id="create-password"
-                type="password"
-                value={createForm.password}
-                onChange={(e) => setCreateForm((f) => ({ ...f, password: e.target.value }))}
-                required
-                minLength={8}
-                placeholder="Min 8 characters"
+                id="create-phone"
+                type="tel"
+                value={createForm.phone}
+                onChange={(e) => setCreateForm((f) => ({ ...f, phone: e.target.value.replace(/[^\d+]/g, "").slice(0, 16) }))}
+                placeholder="+32xxx for country and phone format"
+                style={{ width: "100%", maxWidth: 280 }}
               />
             </div>
+            <PasswordField
+              id="create-password"
+              value={createForm.password}
+              onChange={(v) => setCreateForm((f) => ({ ...f, password: v }))}
+              label="Password"
+              placeholder="Enter password"
+            />
             <div className="form-group">
               <label>Roles</label>
               <div style={{ display: "flex", flexWrap: "wrap", gap: "0.75rem", marginTop: "0.35rem" }}>

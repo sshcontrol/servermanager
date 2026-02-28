@@ -1,6 +1,8 @@
 from datetime import datetime
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, field_validator
 from typing import List
+
+from app.core.security import validate_password_strength
 
 
 class ServerAccessItem(BaseModel):
@@ -18,6 +20,12 @@ class UserCreate(UserBase):
     password: str = Field(..., min_length=8)
     role_ids: List[str] = []
     server_access: List[ServerAccessItem] = []
+
+    @field_validator("password")
+    @classmethod
+    def validate_password(cls, v: str) -> str:
+        validate_password_strength(v)
+        return v
 
 
 class ProfileUpdate(BaseModel):
@@ -37,6 +45,13 @@ class UserUpdate(BaseModel):
     username: str | None = Field(None, min_length=2, max_length=100)
     phone: str | None = Field(None, min_length=10, max_length=20, pattern=r"^\+[1-9]\d{8,14}$")
     password: str | None = Field(None, min_length=8)
+
+    @field_validator("password")
+    @classmethod
+    def validate_password(cls, v: str | None) -> str | None:
+        if v is not None:
+            validate_password_strength(v)
+        return v
     is_active: bool | None = None
     totp_enabled: bool | None = None  # admin can set False to disable 2FA for user
     role_ids: List[str] | None = None
@@ -62,9 +77,12 @@ class UserResponse(BaseModel):
     totp_enabled: bool
     email_verified: bool = True
     phone_verified: bool = False
+    sms_verification_enabled: bool = False
     onboarding_completed: bool = True
     needs_initial_password: bool = False
     needs_initial_username: bool = False
+    is_google_user: bool = False  # True if signed up via Google (no password to verify)
+    is_tenant_owner: bool = False  # True if user owns their tenant (can edit company name)
     tenant_id: str | None = None
     company_name: str | None = None
     created_at: datetime

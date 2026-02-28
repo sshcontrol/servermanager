@@ -2,7 +2,13 @@ import { useState } from "react";
 import { api } from "../api/client";
 import { useAuth } from "../contexts/AuthContext";
 
-export type DestructiveAction = "delete_server" | "delete_user" | "delete_server_group" | "delete_user_group";
+export type DestructiveAction =
+  | "delete_server"
+  | "delete_user"
+  | "delete_server_group"
+  | "delete_user_group"
+  | "refund_transaction"
+  | "recharge_transaction";
 
 type Props = {
   open: boolean;
@@ -13,6 +19,8 @@ type Props = {
   targetName: string;
   onVerified: (verificationToken: string) => void;
   onCancel: () => void;
+  /** For refund_transaction and recharge_transaction, password is required */
+  requirePassword?: boolean;
 };
 
 type VerificationMethod = "email" | "totp" | "sms";
@@ -26,17 +34,20 @@ export default function DestructiveVerificationModal({
   targetName,
   onVerified,
   onCancel,
+  requirePassword = false,
 }: Props) {
   const { user } = useAuth();
   const totpEnabled = user?.totp_enabled === true;
+  const smsEnabled = user?.phone_verified === true;
 
+  const [password, setPassword] = useState("");
   const [method, setMethod] = useState<VerificationMethod | null>(null);
   const [code, setCode] = useState("");
   const [sending, setSending] = useState(false);
   const [verifying, setVerifying] = useState(false);
   const [error, setError] = useState("");
 
-  const handleSendCode = async () => {
+  const handleSendCode = async (channel: "email" | "sms" = "email") => {
     setError("");
     setSending(true);
     try {
@@ -44,8 +55,9 @@ export default function DestructiveVerificationModal({
         action,
         target_id: targetId,
         target_name: targetName,
+        channel,
       });
-      setMethod("email");
+      setMethod(channel);
       setCode("");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to send code");
@@ -56,15 +68,21 @@ export default function DestructiveVerificationModal({
 
   const handleVerify = async () => {
     if (!method || !code.trim()) return;
+    if (requirePassword && !password.trim()) {
+      setError("Password is required");
+      return;
+    }
     setError("");
     setVerifying(true);
     try {
-      const res = await api.post<{ verification_token: string }>("/api/auth/verify-destructive-action", {
+      const payload: Record<string, string> = {
         verification_type: method,
         code: code.trim(),
         action,
         target_id: targetId,
-      });
+      };
+      if (requirePassword) payload.password = password;
+      const res = await api.post<{ verification_token: string }>("/api/auth/verify-destructive-action", payload);
       onVerified(res.verification_token);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Verification failed");
@@ -77,10 +95,6 @@ export default function DestructiveVerificationModal({
     setMethod("totp");
     setCode("");
     setError("");
-  };
-
-  const handleChooseSms = () => {
-    setError("SMS verification will be available soon.");
   };
 
   if (!open) return null;
@@ -103,7 +117,7 @@ export default function DestructiveVerificationModal({
               type="button"
               className="primary"
               disabled={sending}
-              onClick={handleSendCode}
+              onClick={() => handleSendCode("email")}
             >
               {sending ? "Sending…" : "Verify by Email (4-digit code)"}
             </button>
@@ -116,21 +130,37 @@ export default function DestructiveVerificationModal({
                 Verify by 2FA (authenticator app)
               </button>
             )}
-            <button
-              type="button"
-              className="btn-outline"
-              disabled
-              onClick={handleChooseSms}
-              title="Coming soon"
-            >
-              Verify by SMS <span style={{ fontSize: "0.75rem", opacity: 0.7 }}>(coming soon)</span>
-            </button>
+            {smsEnabled && (
+              <button
+                type="button"
+                className="btn-outline"
+                disabled={sending}
+                onClick={() => handleSendCode("sms")}
+              >
+                {sending ? "Sending…" : "Verify by SMS (4-digit code)"}
+              </button>
+            )}
           </div>
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
+            {requirePassword && (
+              <div>
+                <label style={{ display: "block", fontSize: "0.85rem", color: "var(--text-muted)", marginBottom: "0.25rem" }}>
+                  Your password
+                </label>
+                <input
+                  type="password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="Password"
+                  style={{ width: "100%", padding: "0.5rem" }}
+                  autoComplete="current-password"
+                />
+              </div>
+            )}
             <div>
               <label style={{ display: "block", fontSize: "0.85rem", color: "var(--text-muted)", marginBottom: "0.25rem" }}>
-                {method === "totp" ? "Enter 6-digit code from your authenticator app" : "Enter 4-digit code from your email"}
+                {method === "totp" ? "Enter 6-digit code from your authenticator app" : method === "sms" ? "Enter 4-digit code from your phone" : "Enter 4-digit code from your email"}
               </label>
               <input
                 type="text"
@@ -155,17 +185,17 @@ export default function DestructiveVerificationModal({
               <button
                 type="button"
                 className="btn-outline"
-                onClick={() => { setMethod(null); setCode(""); setError(""); }}
+                onClick={() => { setMethod(null); setCode(""); setPassword(""); setError(""); }}
               >
                 Back
               </button>
               <button
                 type="button"
                 className="btn-outline-danger"
-                disabled={verifying || code.length !== codeLength}
+                disabled={verifying || code.length !== codeLength || (requirePassword && !password.trim())}
                 onClick={handleVerify}
               >
-                {verifying ? "Verifying…" : "Verify & Delete"}
+                {verifying ? "Verifying…" : requirePassword ? "Verify & Continue" : "Verify & Delete"}
               </button>
             </div>
           </div>

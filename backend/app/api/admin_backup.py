@@ -104,7 +104,7 @@ async def export_history_csv(
     entries = await audit_service.get_all_logs_for_export(db)
     buf = io.StringIO()
     writer = csv.writer(buf)
-    writer.writerow(["id", "created_at", "action", "resource_type", "resource_id", "user_id", "username", "details"])
+    writer.writerow(["id", "created_at", "action", "resource_type", "resource_id", "user_id", "username", "ip_address", "details"])
     for e in entries:
         writer.writerow([
             e.id,
@@ -114,6 +114,7 @@ async def export_history_csv(
             e.resource_id or "",
             e.user_id or "",
             e.username or "",
+            e.ip_address or "",
             e.details or "",
         ])
     csv_content = buf.getvalue().encode("utf-8-sig")  # BOM for Excel

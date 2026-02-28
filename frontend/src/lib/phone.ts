@@ -73,3 +73,9 @@ export function fromE164(phone: string | null | undefined): { countryCode: strin
 export function isValidE164(phone: string): boolean {
   return /^\+[1-9]\d{8,14}$/.test(phone.replace(/\s/g, ""));
 }
+
+/** Normalize user input to E.164. Accepts "+32123456789" or "32123456789". */
+export function normalizeToE164(input: string): string {
+  const digits = input.replace(/\D/g, "").replace(/^0+/, "");
+  return digits ? `+${digits}` : "";
+}

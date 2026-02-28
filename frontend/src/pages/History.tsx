@@ -10,6 +10,7 @@ type LogEntry = {
   resource_id: string | null;
   user_id: string | null;
   username: string | null;
+  ip_address: string | null;
   details: string | null;
 };
 
@@ -65,7 +66,7 @@ export default function History() {
         </select>
       </div>
       <p className="app-page-desc">
-        System log: server created or deleted, access granted or revoked, users created or deleted.
+        Your actions and actions by users in your organization: server created or deleted, access granted or revoked, users created or deleted.
       </p>
       {error && <p className="error-msg">{error}</p>}
       {loading ? (
@@ -78,14 +79,15 @@ export default function History() {
                 <th>Time</th>
                 <th>Action</th>
                 <th>By</th>
+                <th>IP</th>
                 <th>Details</th>
               </tr>
             </thead>
             <tbody>
               {entries.length === 0 ? (
                 <tr>
-                  <td colSpan={4} className="text-muted" style={{ padding: "1.5rem" }}>
-                    No log entries yet.
+                  <td colSpan={5} className="text-muted" style={{ padding: "1.5rem" }}>
+                    No actions recorded yet.
                   </td>
                 </tr>
               ) : (
@@ -98,6 +100,7 @@ export default function History() {
                       <span className="badge">{ACTION_LABELS[e.action] || e.action}</span>
                     </td>
                     <td className="text-muted">{e.username || "—"}</td>
+                    <td className="text-sm">{e.ip_address || "—"}</td>
                     <td className="text-sm">{e.details || "—"}</td>
                   </tr>
                 ))

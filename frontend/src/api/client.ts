@@ -2,7 +2,7 @@ const API_BASE = import.meta.env.VITE_API_URL || "";
 
 /** Message shown when the backend is unreachable (connection refused, 502/503, etc.). */
 export const SERVER_UNREACHABLE_MSG =
-  "Cannot reach the server. Ensure the backend is running (port 8000) and that the frontend proxy can connect to it. Check for port or IP conflicts.";
+  "Cannot reach the server. Ensure the backend is running (e.g. uvicorn on port 8000). If using a remote backend, set VITE_API_URL in frontend .env to your API URL (e.g. http://your-server:8000). For local dev with proxy, ensure PROXY_TARGET points to the backend.";
 
 export type ApiError = { detail: string | { msg: string }[] };
 
@@ -47,17 +47,26 @@ async function request<T>(
     init.body = JSON.stringify(json);
   }
   let res: Response;
+  const url = `${API_BASE}${path}`;
   try {
-    res = await fetch(`${API_BASE}${path}`, { ...init, headers });
+    res = await fetch(url, { ...init, headers });
   } catch (e) {
     const isNetworkError =
       e instanceof TypeError &&
       (e.message === "Failed to fetch" || e.message === "Load failed" || e.message.includes("NetworkError"));
-    if (isNetworkError) throw new Error(SERVER_UNREACHABLE_MSG);
+    if (isNetworkError) {
+      const hint = API_BASE ? ` (tried ${url})` : " (same-origin request failed)";
+      throw new Error(SERVER_UNREACHABLE_MSG + hint);
+    }
     throw e;
   }
-  if (res.status === 502 || res.status === 503)
+  if (res.status === 502 || res.status === 503) {
+    const body = await res.json().catch(() => ({}));
+    const err = body as ApiError;
+    const msg = typeof err.detail === "string" ? err.detail : err.detail?.[0]?.msg;
+    if (msg) throw new Error(msg);
     throw new Error(SERVER_UNREACHABLE_MSG);
+  }
 
   // Auto-refresh on 401 (expired token) - one attempt only
   if (res.status === 401 && !_isRetry && !path.includes("/auth/login") && !path.includes("/auth/refresh")) {
@@ -85,13 +94,19 @@ async function request<T>(
 }
 
 /** Trigger browser download of a file from an API path (uses auth token). */
-export async function downloadFile(path: string, suggestedName: string): Promise<void> {
+export async function downloadFile(path: string, suggestedName: string, allowEmpty = false): Promise<void> {
   const token = localStorage.getItem("access_token");
   const res = await fetch(`${API_BASE}${path}`, {
     headers: token ? { Authorization: `Bearer ${token}` } : {},
+    credentials: "same-origin",
   });
-  if (!res.ok) throw new Error(res.statusText || "Download failed");
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    const msg = typeof (err as { detail?: string }).detail === "string" ? (err as { detail: string }).detail : res.statusText;
+    throw new Error(msg || "Download failed");
+  }
   const blob = await res.blob();
+  if (!allowEmpty && blob.size < 50) throw new Error("Downloaded file is empty or invalid");
   const name = res.headers.get("Content-Disposition")?.match(/filename="?([^";\n]+)"?/)?.[1] || suggestedName;
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
@@ -129,7 +144,8 @@ export async function postAndDownload(path: string, body: unknown, suggestedName
 
 export const api = {
   get: <T>(path: string) => request<T>(path, { method: "GET" }),
-  post: <T>(path: string, json?: unknown) => request<T>(path, { method: "POST", json }),
+  post: <T>(path: string, json?: unknown, options?: { headers?: Record<string, string> }) =>
+    request<T>(path, { method: "POST", json, ...options }),
   patch: <T>(path: string, json?: unknown) => request<T>(path, { method: "PATCH", json }),
   delete: <T = void>(path: string, options?: { headers?: Record<string, string> }) =>
     request<T>(path, { method: "DELETE", headers: options?.headers }),

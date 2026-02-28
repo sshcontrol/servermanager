@@ -13,7 +13,7 @@ from sqlalchemy import select
 
 from app.database import get_db
 from app.models import User
-from app.models.tenant import EmailVerificationToken, PasswordResetToken
+from app.models.tenant import EmailVerificationToken, PasswordResetToken, AccountClosureToken
 from app.models.user import utcnow_naive
 from app.schemas.tenant import (
     SignupRequest, SignupResponse,
@@ -21,6 +21,7 @@ from app.schemas.tenant import (
     ResendVerificationRequest, PlanResponse,
 )
 from app.models.tenant import Plan
+from app.models.platform_settings import PlatformSettings
 from app.services.tenant_service import TenantService
 from app.services import email_service
 from app.config import get_settings
@@ -176,6 +177,90 @@ async def reset_password(data: ResetPasswordRequest, db: Annotated[AsyncSession,
     return {"message": "Password reset successfully. You can now log in with your new password."}
 
 
+# ─── Account closure (public, via email link) ─────────────────────────────────
+
+@router.get("/confirm-account-closure")
+async def confirm_account_closure_get(
+    token: str = Query(...),
+    db: AsyncSession = Depends(get_db),
+):
+    """Email link hits this. Verifies token, executes closure, redirects to frontend with result."""
+    from urllib.parse import urlencode
+    from app.models.tenant import Tenant
+    from app.services.tenant_service import TenantService
+    from app.services.platform_key_service import PlatformKeyService
+    from app.services import sync_service
+    from app.config import get_settings
+
+    settings = get_settings()
+    result = await db.execute(
+        select(AccountClosureToken).where(
+            AccountClosureToken.token == token,
+            AccountClosureToken.used == False,  # noqa: E712
+        )
+    )
+    act = result.scalar_one_or_none()
+    if not act:
+        params = urlencode({"error": "Invalid or expired link"})
+        return RedirectResponse(url=f"{settings.frontend_url}/#/confirm-account-closure?{params}", status_code=302)
+    if utcnow_naive() > act.expires_at:
+        params = urlencode({"error": "Link has expired"})
+        return RedirectResponse(url=f"{settings.frontend_url}/#/confirm-account-closure?{params}", status_code=302)
+
+    user_result = await db.execute(select(User).where(User.id == act.user_id))
+    user = user_result.scalar_one_or_none()
+    if not user:
+        params = urlencode({"error": "User not found"})
+        return RedirectResponse(url=f"{settings.frontend_url}/#/confirm-account-closure?{params}", status_code=302)
+
+    act.used = True
+    await db.flush()
+
+    if act.action == "close_user":
+        await db.delete(user)
+        await db.flush()
+        params = urlencode({"closed": "1", "message": "Your account has been closed."})
+        return RedirectResponse(url=f"{settings.frontend_url}/#/confirm-account-closure?{params}", status_code=302)
+
+    # close_tenant: unregister servers, then delete tenant
+    tenant_id = user.tenant_id
+    if not tenant_id:
+        params = urlencode({"error": "No tenant to close"})
+        return RedirectResponse(url=f"{settings.frontend_url}/#/confirm-account-closure?{params}", status_code=302)
+
+    from app.models.server import Server
+    from app.services.stripe_service import cancel_subscription_for_tenant
+
+    # Cancel Stripe subscription so we won't charge the deleted tenant again
+    try:
+        await cancel_subscription_for_tenant(db, tenant_id, cancel_immediately=True)
+    except Exception:
+        pass  # Continue with deletion even if Stripe cancel fails
+
+    servers_result = await db.execute(select(Server).where(Server.tenant_id == tenant_id))
+    servers = list(servers_result.scalars().all())
+    private_key = await PlatformKeyService.get_private_pem(db, tenant_id=tenant_id)
+    if private_key and servers:
+        for srv in servers:
+            try:
+                await sync_service.run_unregister_on_server(srv, private_key)
+            except Exception:
+                pass  # Continue even if unregister fails on some servers
+
+    t = await TenantService.get_tenant(db, tenant_id)
+    t.owner_id = None
+    await db.flush()
+    users_result = await db.execute(select(User).where(User.tenant_id == tenant_id))
+    for u in users_result.scalars().all():
+        await db.delete(u)
+    await db.flush()
+    await db.delete(t)
+    await db.flush()
+
+    params = urlencode({"closed": "1", "message": "Your organization account has been closed."})
+    return RedirectResponse(url=f"{settings.frontend_url}/#/confirm-account-closure?{params}", status_code=302)
+
+
 @router.get("/plans", response_model=list[PlanResponse])
 async def list_public_plans(db: Annotated[AsyncSession, Depends(get_db)]):
     result = await db.execute(
@@ -185,6 +270,40 @@ async def list_public_plans(db: Annotated[AsyncSession, Depends(get_db)]):
         ).order_by(Plan.sort_order, Plan.price)
     )
     return result.scalars().all()
+
+
+@router.get("/platform-settings")
+async def get_public_platform_settings(db: Annotated[AsyncSession, Depends(get_db)]):
+    """Public endpoint: returns SEO and analytics settings for frontend (no secrets)."""
+    result = await db.execute(select(PlatformSettings).where(PlatformSettings.id == "1"))
+    cfg = result.scalar_one_or_none()
+    if not cfg:
+        return {
+            "google_analytics_id": "",
+            "google_ads_id": "",
+            "google_ads_conversion_label": "",
+            "google_tag_manager_id": "",
+            "google_oauth_client_id": "",
+            "recaptcha_site_key": "",
+            "seo_site_title": "SSHCONTROL",
+            "seo_meta_description": None,
+            "seo_keywords": "",
+            "seo_og_image_url": "",
+            "stripe_enabled": False,
+        }
+    return {
+        "google_analytics_id": cfg.google_analytics_id or "",
+        "google_ads_id": cfg.google_ads_id or "",
+        "google_ads_conversion_label": cfg.google_ads_conversion_label or "",
+        "google_tag_manager_id": cfg.google_tag_manager_id or "",
+        "google_oauth_client_id": cfg.google_oauth_client_id or "",
+        "recaptcha_site_key": getattr(cfg, "recaptcha_site_key", None) or "",
+        "seo_site_title": cfg.seo_site_title or "SSHCONTROL",
+        "seo_meta_description": cfg.seo_meta_description,
+        "seo_keywords": cfg.seo_keywords or "",
+        "seo_og_image_url": cfg.seo_og_image_url or "",
+        "stripe_enabled": getattr(cfg, "stripe_enabled", False) or False,
+    }
 
 
 @router.get("/terms")

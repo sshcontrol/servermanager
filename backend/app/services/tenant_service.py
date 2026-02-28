@@ -108,6 +108,88 @@ class TenantService:
         return tenant, user
 
     @staticmethod
+    async def signup_with_google(
+        db: AsyncSession,
+        email: str,
+        full_name: str,
+        google_id: str,
+        company_name: str | None = None,
+    ) -> tuple["Tenant", "User"]:
+        """Create tenant and user from Google OAuth. Uses placeholder password."""
+        existing = await db.execute(select(User).where(User.email == email))
+        if existing.scalar_one_or_none():
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="An account with this email already exists",
+            )
+
+        username = email.split("@")[0]
+        base_username = username
+        counter = 1
+        while True:
+            check = await db.execute(select(User).where(User.username == username))
+            if not check.scalar_one_or_none():
+                break
+            username = f"{base_username}{counter}"
+            counter += 1
+
+        placeholder_password = secrets.token_urlsafe(32)
+        user = User(
+            email=email,
+            username=username,
+            full_name=full_name,
+            hashed_password=get_password_hash(placeholder_password),
+            is_active=True,
+            is_superuser=True,
+            email_verified=True,
+            onboarding_completed=False,
+            needs_initial_username=False,
+            google_id=google_id,
+        )
+        db.add(user)
+        await db.flush()
+
+        org_name = company_name or full_name or "Personal"
+        tenant = Tenant(
+            company_name=org_name,
+            owner_id=user.id,
+        )
+        db.add(tenant)
+        await db.flush()
+
+        user.tenant_id = tenant.id
+        await db.flush()
+
+        role_result = await db.execute(select(Role).where(Role.name == "admin"))
+        admin_role = role_result.scalar_one_or_none()
+        if admin_role:
+            await db.execute(user_roles.insert().values(user_id=user.id, role_id=admin_role.id))
+            await db.flush()
+
+        free_plan = await TenantService.get_free_plan(db)
+        now = utcnow_naive()
+        sub = Subscription(
+            tenant_id=tenant.id,
+            plan_id=free_plan.id,
+            is_active=True,
+            starts_at=now,
+            expires_at=now + timedelta(days=free_plan.duration_days),
+            created_at=now,
+        )
+        db.add(sub)
+        await db.flush()
+
+        deploy_token = DeploymentToken(
+            id=generate_uuid(),
+            tenant_id=tenant.id,
+            token=secrets.token_hex(32),
+        )
+        db.add(deploy_token)
+        await db.flush()
+
+        return tenant, user
+
+    @staticmethod
     async def get_active_subscription(db: AsyncSession, tenant_id: str) -> Optional[Subscription]:
         result = await db.execute(
             select(Subscription)
@@ -153,6 +235,16 @@ class TenantService:
             select(func.count(Server.id)).where(Server.tenant_id == tenant_id)
         )
         return result.scalar_one()
+
+    @staticmethod
+    async def list_tenant_users(db: AsyncSession, tenant_id: str):
+        """List all users belonging to a tenant (for superadmin)."""
+        result = await db.execute(
+            select(User)
+            .where(User.tenant_id == tenant_id)
+            .order_by(User.username)
+        )
+        return result.scalars().all()
 
     @staticmethod
     async def count_tenant_pending_invitations(db: AsyncSession, tenant_id: str) -> int:

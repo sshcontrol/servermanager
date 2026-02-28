@@ -29,10 +29,10 @@ class Settings(BaseSettings):
     totp_issuer: str = "SSHCONTROL"
 
     # Public API URL (for deploy script)
-    public_api_url: str = "http://65.21.240.77:8000"
+    public_api_url: str = "https://sshcontrol.com"
 
     # When False, skip immediate SSH sync (backend in Docker often cannot SSH to targets).
-    enable_ssh_sync: bool = True
+    enable_ssh_sync: bool = False
 
     # SendGrid email (fallback; primary config stored in DB via superadmin panel)
     sendgrid_api_key: str = ""

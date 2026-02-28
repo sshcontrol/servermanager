@@ -1,5 +1,6 @@
 # Environment and secrets
 .env
+frontend/.env
 *.env.local
 
 # Python
@@ -41,6 +42,7 @@ Desktop.ini
 
 # Debug / logs
 *.log
+*.debug.log
 .cursor/debug.log
 
 # Backups (may contain sensitive data)

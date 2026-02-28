@@ -1,8 +1,10 @@
 import { useState, useEffect, useCallback } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
+import { api } from "../api/client";
 import Logo from "./Logo";
 import ConfirmModal from "./ConfirmModal";
+import NotificationDropdown from "./NotificationDropdown";
 
 const iconSize = 20;
 
@@ -27,8 +29,19 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
 
   const [openMenu, setOpenMenu] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [clientIp, setClientIp] = useState<string | null>(null);
 
   const closeSidebar = useCallback(() => setSidebarOpen(false), []);
+
+  useEffect(() => {
+    if (!user) {
+      setClientIp(null);
+      return;
+    }
+    api.get<{ client_ip: string }>("/api/auth/client-ip")
+      .then((r) => setClientIp(r.client_ip || null))
+      .catch(() => setClientIp(null));
+  }, [user?.id]);
 
   useEffect(() => {
     closeSidebar();
@@ -38,6 +51,9 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     else if (path.startsWith("/user-groups") || path.startsWith("/users")) setOpenMenu("user");
     else if (path.startsWith("/security")) setOpenMenu("security");
     else if (path.startsWith("/profile")) setOpenMenu("profile");
+    else if (path.startsWith("/plan-billing")) setOpenMenu("plan-billing");
+    else if (path === "/keys") setOpenMenu(null);
+    else if (path === "/history-export") setOpenMenu(null);
     else if (path === "/monitor") setOpenMenu(null);
     else if (path === "/history") setOpenMenu(null);
   }, [path, closeSidebar]);
@@ -53,25 +69,21 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     <div className="app-shell">
       <header className="app-topbar">
         <div className="app-topbar-left">
-          <span className="app-topbar-user">{user?.full_name || user?.username}</span>
-          {user?.company_name && <span className="app-topbar-company">{user.company_name}</span>}
+          {!isPlatformSuperadmin && <NotificationDropdown />}
         </div>
         <div className="app-topbar-right">
           {isAdmin && !isPlatformSuperadmin && (
             <>
-              <Link to="/monitor" className={`app-topbar-link${path === "/monitor" ? " active" : ""}`}>
+              <Link to="/monitor" className={`app-topbar-link${path === "/monitor" ? " active" : ""}`} title="User monitor" aria-label="User monitor">
                 <NavIcon><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg></NavIcon>
-                User monitor
               </Link>
-              <Link to="/history" className={`app-topbar-link${path === "/history" ? " active" : ""}`}>
+              <Link to="/history" className={`app-topbar-link${path === "/history" ? " active" : ""}`} title="History" aria-label="History">
                 <NavIcon><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></NavIcon>
-                History
               </Link>
             </>
           )}
-          <button type="button" className="app-topbar-link app-topbar-logout" onClick={() => setLogoutConfirmOpen(true)}>
+          <button type="button" className="app-topbar-link app-topbar-logout" onClick={() => setLogoutConfirmOpen(true)} title="Logout" aria-label="Logout">
             <NavIcon><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" x2="9" y1="12" y2="12"/></svg></NavIcon>
-            Logout
           </button>
         </div>
       </header>
@@ -125,6 +137,12 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
                       </NavIcon>
                       Add server
                     </Link>
+                    <Link to="/server/access" className={subClass("/server/access")}>
+                      <NavIcon>
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 7a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2h10z"/><path d="M12 12v.01"/></svg>
+                      </NavIcon>
+                      Server access
+                    </Link>
                     <Link to="/server" className={subClass("/server")}>
                       <NavIcon>
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M8 6h13"/><path d="M8 12h13"/><path d="M8 18h13"/><path d="M3 6h.01"/><path d="M3 12h.01"/><path d="M3 18h.01"/></svg>
@@ -139,11 +157,11 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
                     </Link>
                   </>
                 ) : (
-                  <Link to="/server" className={subClass("/server")}>
+                  <Link to="/server/access" className={subClass("/server/access")}>
                     <NavIcon>
-                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="20" height="8" x="2" y="2" rx="2"/><rect width="20" height="8" x="2" y="14" rx="2"/></svg>
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 7a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2h10z"/><path d="M12 12v.01"/></svg>
                     </NavIcon>
-                    Servers
+                    Server access
                   </Link>
                 )}
               </div>
@@ -215,12 +233,6 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
                     </NavIcon>
                     Whitelist IP
                   </Link>
-                  <span className="app-nav-sublink app-nav-sublink-disabled" title="Coming soon">
-                    <NavIcon>
-                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M2 12h20"/><path d="M12 2v20"/><path d="M5 5l14 14"/></svg>
-                    </NavIcon>
-                    VPN <span style={{ fontSize: "0.75rem", opacity: 0.8 }}>(coming soon)</span>
-                  </span>
                 </div>
               )}
             </div>
@@ -249,6 +261,12 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
                     </NavIcon>
                     Tenants
                   </Link>
+                  <Link to="/superadmin/users" className={subClass("/superadmin/users")}>
+                    <NavIcon>
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+                    </NavIcon>
+                    Users
+                  </Link>
                   <Link to="/superadmin/plans" className={subClass("/superadmin/plans")}>
                     <NavIcon>
                       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V4a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v3"/><path d="M12 12v.01"/></svg>
@@ -266,6 +284,36 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
                       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>
                     </NavIcon>
                     Backup
+                  </Link>
+                  <Link to="/superadmin/payment" className={subClass("/superadmin/payment")}>
+                    <NavIcon>
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="1" y="4" width="22" height="16" rx="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg>
+                    </NavIcon>
+                    Payment
+                  </Link>
+                  <Link to="/superadmin/settings" className={subClass("/superadmin/settings")}>
+                    <NavIcon>
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-1.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h1.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v1.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-1.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+                    </NavIcon>
+                    Settings
+                  </Link>
+                  <Link to="/superadmin/notifications" className={subClass("/superadmin/notifications")}>
+                    <NavIcon>
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13 21a2 2 0 0 1-2 2 2 2 0 0 1-2-2"/></svg>
+                    </NavIcon>
+                    Send notification
+                  </Link>
+                  <Link to="/superadmin/sms" className={subClass("/superadmin/sms")}>
+                    <NavIcon>
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                    </NavIcon>
+                    SMS
+                  </Link>
+                  <Link to="/superadmin/history" className={subClass("/superadmin/history")}>
+                    <NavIcon>
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                    </NavIcon>
+                    History
                   </Link>
                 </div>
               )}
@@ -292,42 +340,94 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
                   <NavIcon>
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
                   </NavIcon>
-                  Profile
+                  Account
                 </Link>
-                {!isPlatformSuperadmin && (
-                  <Link to="/profile/keys" className={subClass("/profile/keys")}>
-                    <NavIcon>
-                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 7a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2h10z"/><path d="M12 12v.01"/><path d="M12 12a1 1 0 1 0 0-2 1 1 0 0 0 0 2z"/></svg>
-                    </NavIcon>
-                    Key
-                  </Link>
-                )}
-                {isAdmin && !isPlatformSuperadmin && (
-                  <Link to="/profile/plan" className={subClass("/profile/plan")}>
-                    <NavIcon>
-                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M16 13H8"/><path d="M16 17H8"/><path d="M10 9H8"/></svg>
-                    </NavIcon>
-                    Plan
-                  </Link>
-                )}
-                {isAdmin && (
-                  <Link to="/profile/import-export" className={subClass("/profile/import-export")}>
-                    <NavIcon>
-                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>
-                    </NavIcon>
-                    History Export
-                  </Link>
-                )}
+                <Link to="/profile/password" className={subClass("/profile/password")}>
+                  <NavIcon>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+                  </NavIcon>
+                  Password
+                </Link>
+                <Link to="/profile/security" className={subClass("/profile/security")}>
+                  <NavIcon>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+                  </NavIcon>
+                  Security
+                </Link>
               </div>
             )}
+
           </div>
+
+          {isAdmin && !isPlatformSuperadmin && (
+            <div className="app-nav-group">
+              <button
+                type="button"
+                className={`app-nav-group-btn ${openMenu === "plan-billing" ? "open" : ""}`}
+                onClick={() => toggle("plan-billing")}
+                aria-expanded={openMenu === "plan-billing"}
+              >
+                <span className="app-nav-group-btn-inner">
+                  <NavIcon>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V4a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v3"/><rect x="1" y="4" width="22" height="16" rx="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg>
+                  </NavIcon>
+                  Plan & Billing
+                </span>
+              </button>
+              {openMenu === "plan-billing" && (
+              <div className="app-nav-sublinks">
+                <Link to="/plan-billing/plan" className={subClass("/plan-billing/plan")}>
+                  <NavIcon>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V4a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v3"/></svg>
+                  </NavIcon>
+                  Plan
+                </Link>
+                <Link to="/plan-billing/billing" className={subClass("/plan-billing/billing")}>
+                  <NavIcon>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="1" y="4" width="22" height="16" rx="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg>
+                  </NavIcon>
+                  Billing
+                </Link>
+                <Link to="/plan-billing/payment" className={subClass("/plan-billing/payment")}>
+                  <NavIcon>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="1" y="4" width="22" height="16" rx="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg>
+                  </NavIcon>
+                  Payment
+                </Link>
+              </div>
+              )}
+            </div>
+          )}
+
+          {!isPlatformSuperadmin && (
+            <Link to="/keys" className={navClass("/keys")}>
+              <NavIcon>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M15 7a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2h10z"/><path d="M12 12v.01"/><path d="M12 12a1 1 0 1 0 0-2 1 1 0 0 0 0 2z"/></svg>
+              </NavIcon>
+              Key
+            </Link>
+          )}
+
+          {isAdmin && !isPlatformSuperadmin && (
+            <Link to="/history-export" className={navClass("/history-export")}>
+              <NavIcon>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>
+              </NavIcon>
+              History Export
+            </Link>
+          )}
 
         </nav>
         <div className="app-sidebar-footer">
           <div className="app-sidebar-user">
-            {user?.company_name && <span className="app-sidebar-company">{user.company_name}</span>}
+            {user?.tenant_id && <span className="app-sidebar-company">Company: {user.company_name || '—'}</span>}
             <span className="app-sidebar-username">{user?.full_name || user?.username}</span>
             <span className="app-sidebar-role">Role: {isPlatformSuperadmin ? "Platform Superadmin" : (isAdmin ? "Admin" : "User")}</span>
+            {clientIp && (
+              <span className="app-sidebar-role" style={{ marginTop: "0.25rem", fontSize: "0.8rem", opacity: 0.85 }}>
+                Your IP: {clientIp}
+              </span>
+            )}
           </div>
         </div>
       </aside>

@@ -38,18 +38,22 @@ services:
       SENDGRID_FROM_EMAIL: ${SENDGRID_FROM_EMAIL:-noreply@sshcontrol.com}
       SENDGRID_FROM_NAME: ${SENDGRID_FROM_NAME:-SSHCONTROL}
       FRONTEND_URL: ${FRONTEND_URL:-https://sshcontrol.com}
+      CORS_ORIGINS: ${CORS_ORIGINS:-}
+      SMPP_PROXY: ${SMPP_PROXY:-}
     ports:
       - "8000:8000"
     depends_on:
       db:
         condition: service_healthy
     volumes:
-      - ./backend:/app
+      - ./backend:/app  # DEV ONLY: live-reload code mount; remove for production
 
   frontend:
     build:
       context: ./frontend
       dockerfile: Dockerfile
+      args:
+        VITE_API_URL: ${VITE_API_URL:-}
     ports:
       - "3000:3000"
     depends_on:

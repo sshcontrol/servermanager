@@ -111,3 +111,88 @@ async def run_sync_on_servers(
             "output": result.get("output"),
         })
     return results
+
+
+def _run_unregister_on_server_sync(
+    host: str,
+    port: int,
+    private_key_pem: str,
+    timeout_seconds: int = 60,
+) -> dict:
+    """
+    SSH to server and remove SSHCONTROL scripts, cron, managed users.
+    Returns {success: bool, error?: str, output?: str}.
+    """
+    if not host or not host.strip():
+        return {"success": False, "error": "Server has no IP address or hostname configured"}
+    host = host.strip()
+    if host in ("localhost", "127.0.0.1", "::1"):
+        host = "host.docker.internal"
+    try:
+        key = paramiko.RSAKey.from_private_key(io.StringIO(private_key_pem))
+    except Exception as e:
+        return {"success": False, "error": f"Invalid platform key: {e}"}
+    client = paramiko.SSHClient()
+    client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    try:
+        client.connect(
+            hostname=host,
+            port=port,
+            username="root",
+            pkey=key,
+            timeout=15,
+            banner_timeout=15,
+        )
+    except paramiko.SSHException as e:
+        return {"success": False, "error": f"SSH connection failed: {e}"}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+    try:
+        # Remove cron, sync scripts, managed users, clear root authorized_keys
+        cmd = (
+            "(crontab -l 2>/dev/null | grep -v sync-authorized-keys | grep -v sync-users) | crontab - 2>/dev/null || true; "
+            "rm -rf /etc/sshcontrol 2>/dev/null; "
+            "rm -f ~/.ssh/authorized_keys 2>/dev/null; "
+            "touch ~/.ssh/authorized_keys 2>/dev/null; chmod 600 ~/.ssh/authorized_keys 2>/dev/null"
+        )
+        stdin, stdout, stderr = client.exec_command(cmd, timeout=timeout_seconds)
+        exit_status = stdout.channel.recv_exit_status()
+        out = stdout.read().decode("utf-8", errors="replace")
+        err = stderr.read().decode("utf-8", errors="replace")
+        combined = (out + "\n" + err).strip() if (out or err) else ""
+        if exit_status != 0:
+            return {
+                "success": False,
+                "error": f"Unregister exited with code {exit_status}",
+                "output": combined[:2000] if combined else None,
+            }
+        return {"success": True, "output": combined[:500] if combined else None}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+    finally:
+        client.close()
+
+
+async def run_unregister_on_server(
+    server: "Server",
+    private_key_pem: str | None,
+    timeout_seconds: int = 60,
+    executor: ThreadPoolExecutor | None = None,
+) -> dict:
+    """
+    Run unregister on a target server via SSH. Removes scripts, cron, managed users.
+    Returns {success, error?, output?}.
+    """
+    host = (server.ip_address or "").strip() or (server.hostname or "").strip()
+    if not private_key_pem:
+        return {"success": False, "error": "Platform SSH key not configured"}
+    loop = asyncio.get_event_loop()
+    _executor = executor or ThreadPoolExecutor(max_workers=4)
+    return await loop.run_in_executor(
+        _executor,
+        _run_unregister_on_server_sync,
+        host,
+        22,
+        private_key_pem,
+        timeout_seconds,
+    )

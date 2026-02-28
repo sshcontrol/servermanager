@@ -7,6 +7,12 @@
   justify-content: center;
   position: relative;
   padding: 2rem;
+  overflow-y: auto;
+}
+@media (max-width: 768px) {
+  .login-page {
+    padding: 1rem;
+  }
 }
 
 /* Full background: bg.png at full opacity, no overlay */
@@ -35,10 +41,13 @@
   border: 1px solid rgba(255, 255, 255, 0.12);
   border-radius: 20px;
   padding: 2.25rem 2rem 2rem;
+  padding-bottom: 2rem;
   box-shadow:
     0 25px 50px -12px rgba(0, 0, 0, 0.4),
     0 0 0 1px rgba(64, 224, 208, 0.08),
     inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  max-height: min(90vh, 700px);
+  overflow-y: auto;
 }
 
 .login-card-header {
@@ -96,6 +105,13 @@
   margin-bottom: 0.75rem;
 }
 
+.login-recaptcha {
+  min-height: 78px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+}
+
 .login-submit {
   width: 100%;
   padding: 0.85rem 1.25rem;
@@ -143,6 +159,23 @@
   letter-spacing: 0.02em;
 }
 
+/* Bottom links (Create account, Forgot password) – ensure visible when card scrolls */
+.login-form-links {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 1rem;
+  font-size: 0.875rem;
+  flex-shrink: 0;
+}
+.login-form-links a {
+  color: var(--primary, #40E0D0);
+  font-weight: 500;
+  text-decoration: none;
+}
+.login-form-links a:hover {
+  color: var(--primary-hover, #2bc4b8);
+}
+
 .login-footer {
   text-align: center;
   margin-top: 1.25rem;
@@ -150,3 +183,4 @@
   color: var(--text-muted);
   opacity: 0.9;
 }
+

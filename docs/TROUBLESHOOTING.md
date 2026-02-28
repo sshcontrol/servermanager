@@ -1,6 +1,6 @@
-# Troubleshooting: "Cannot reach the server" on Login
+# Troubleshooting: "Cannot reach the server" on Login / Verification
 
-This error means the frontend cannot connect to the backend API. Follow these steps:
+This error means the frontend cannot connect to the backend API. It often appears **after Google OAuth** when the backend is unreachable (e.g. backend down, wrong proxy config). Follow these steps:
 
 ## 1. Verify the backend is running
 
@@ -52,7 +52,22 @@ sudo ufw allow 8000
 sudo ufw reload
 ```
 
-## 6. Database
+## 6. Docker: frontend can't reach backend
+
+If you use Docker and access via https://sshcontrol.com (or your domain):
+- Nginx Proxy Manager must forward `/api` to the backend. Ensure your NPM proxy config includes `/api` or forwards all paths to the frontend container (which proxies `/api` to backend).
+- The frontend container's nginx proxies `/api` to `http://backend:8000`. Both must be on the same Docker network.
+- If frontend is behind NPM and backend is on a different host, set `VITE_API_URL` and rebuild: `VITE_API_URL=https://sshcontrol.com docker compose build --no-cache frontend`
+
+## 7. CORS (when using VITE_API_URL for remote backend)
+
+If the frontend uses `VITE_API_URL` to point to a different origin, the backend must allow that origin. Set `CORS_ORIGINS` in your `.env` (comma-separated), e.g.:
+```
+CORS_ORIGINS=https://your-frontend.com,http://192.168.1.100:3000
+```
+The default list includes localhost, 127.0.0.1, sshcontrol.com, and 65.21.240.77. LAN IPs (192.168.x.x, 10.x.x.x) are allowed via regex.
+
+## 8. Database
 
 Backend requires PostgreSQL. If `DATABASE_URL` is wrong or the database is down, the backend may fail to start. Check:
 ```bash

@@ -19,23 +19,31 @@ def _user_group_to_item(ug: UserGroup) -> dict:
     }
 
 
-async def list_user_groups(db: AsyncSession) -> list[dict]:
-    r = await db.execute(select(UserGroup).order_by(UserGroup.name))
+async def list_user_groups(db: AsyncSession, tenant_id: str) -> list[dict]:
+    r = await db.execute(
+        select(UserGroup)
+        .where(UserGroup.tenant_id == tenant_id)
+        .order_by(UserGroup.name)
+    )
     return [_user_group_to_item(ug) for ug in r.scalars().all()]
 
 
-async def get_user_group(db: AsyncSession, group_id: str) -> UserGroup | None:
-    r = await db.execute(
+async def get_user_group(db: AsyncSession, group_id: str, tenant_id: str | None = None) -> UserGroup | None:
+    q = (
         select(UserGroup)
         .options(selectinload(UserGroup.members), selectinload(UserGroup.server_accesses))
         .where(UserGroup.id == group_id)
     )
+    if tenant_id is not None:
+        q = q.where(UserGroup.tenant_id == tenant_id)
+    r = await db.execute(q)
     return r.scalar_one_or_none()
 
 
-async def create_user_group(db: AsyncSession, name: str, description: str | None = None) -> UserGroup:
+async def create_user_group(db: AsyncSession, name: str, tenant_id: str, description: str | None = None) -> UserGroup:
     ug = UserGroup(
         id=str(uuid.uuid4()),
+        tenant_id=tenant_id,
         name=name.strip(),
         description=description.strip() if description else None,
     )
@@ -44,8 +52,8 @@ async def create_user_group(db: AsyncSession, name: str, description: str | None
     return ug
 
 
-async def update_user_group(db: AsyncSession, group_id: str, name: str | None = None, description: str | None = None) -> UserGroup | None:
-    ug = await get_user_group(db, group_id)
+async def update_user_group(db: AsyncSession, group_id: str, tenant_id: str, name: str | None = None, description: str | None = None) -> UserGroup | None:
+    ug = await get_user_group(db, group_id, tenant_id)
     if not ug:
         return None
     if name is not None:
@@ -56,8 +64,8 @@ async def update_user_group(db: AsyncSession, group_id: str, name: str | None = 
     return ug
 
 
-async def delete_user_group(db: AsyncSession, group_id: str) -> bool:
-    r = await db.execute(select(UserGroup).where(UserGroup.id == group_id))
+async def delete_user_group(db: AsyncSession, group_id: str, tenant_id: str) -> bool:
+    r = await db.execute(select(UserGroup).where(UserGroup.id == group_id, UserGroup.tenant_id == tenant_id))
     ug = r.scalar_one_or_none()
     if not ug:
         return False
@@ -66,12 +74,14 @@ async def delete_user_group(db: AsyncSession, group_id: str) -> bool:
     return True
 
 
-async def add_member(db: AsyncSession, group_id: str, user_id: str) -> bool:
-    ug = await get_user_group(db, group_id)
+async def add_member(db: AsyncSession, group_id: str, user_id: str, tenant_id: str) -> bool:
+    ug = await get_user_group(db, group_id, tenant_id)
     if not ug:
         return False
     user = await db.get(User, user_id)
     if not user:
+        return False
+    if user.tenant_id != tenant_id:
         return False
     r = await db.execute(
         select(user_group_members).where(
@@ -86,7 +96,10 @@ async def add_member(db: AsyncSession, group_id: str, user_id: str) -> bool:
     return True
 
 
-async def remove_member(db: AsyncSession, group_id: str, user_id: str) -> bool:
+async def remove_member(db: AsyncSession, group_id: str, user_id: str, tenant_id: str) -> bool:
+    ug = await get_user_group(db, group_id, tenant_id)
+    if not ug:
+        return False
     await db.execute(
         delete(user_group_members).where(
             user_group_members.c.user_group_id == group_id,
@@ -97,7 +110,10 @@ async def remove_member(db: AsyncSession, group_id: str, user_id: str) -> bool:
     return True
 
 
-async def list_members(db: AsyncSession, group_id: str) -> list[dict]:
+async def list_members(db: AsyncSession, group_id: str, tenant_id: str) -> list[dict]:
+    ug = await get_user_group(db, group_id, tenant_id)
+    if not ug:
+        return []
     r = await db.execute(
         select(User.id, User.username, User.email)
         .join(user_group_members, user_group_members.c.user_id == User.id)
@@ -106,10 +122,12 @@ async def list_members(db: AsyncSession, group_id: str) -> list[dict]:
     return [{"user_id": row[0], "username": row[1], "email": row[2]} for row in r.all()]
 
 
-async def set_server_user_group_access(db: AsyncSession, server_id: str, user_group_id: str, role: str) -> bool:
+async def set_server_user_group_access(db: AsyncSession, server_id: str, user_group_id: str, role: str, tenant_id: str) -> bool:
     server = await db.get(Server, server_id)
-    ug = await get_user_group(db, user_group_id)
+    ug = await get_user_group(db, user_group_id, tenant_id)
     if not server or not ug:
+        return False
+    if server.tenant_id != tenant_id:
         return False
     await db.execute(
         delete(ServerUserGroupAccess).where(
@@ -122,7 +140,10 @@ async def set_server_user_group_access(db: AsyncSession, server_id: str, user_gr
     return True
 
 
-async def remove_server_user_group_access(db: AsyncSession, server_id: str, user_group_id: str) -> bool:
+async def remove_server_user_group_access(db: AsyncSession, server_id: str, user_group_id: str, tenant_id: str) -> bool:
+    ug = await get_user_group(db, user_group_id, tenant_id)
+    if not ug:
+        return False
     await db.execute(
         delete(ServerUserGroupAccess).where(
             ServerUserGroupAccess.server_id == server_id,
@@ -133,8 +154,11 @@ async def remove_server_user_group_access(db: AsyncSession, server_id: str, user
     return True
 
 
-async def list_user_group_servers(db: AsyncSession, group_id: str) -> list[str]:
+async def list_user_group_servers(db: AsyncSession, group_id: str, tenant_id: str) -> list[str]:
     """Return server IDs that this user group has access to."""
+    ug = await get_user_group(db, group_id, tenant_id)
+    if not ug:
+        return []
     r = await db.execute(
         select(ServerUserGroupAccess.server_id).where(
             ServerUserGroupAccess.user_group_id == group_id
@@ -143,12 +167,15 @@ async def list_user_group_servers(db: AsyncSession, group_id: str) -> list[str]:
     return [row[0] for row in r.all()]
 
 
-async def list_server_user_groups(db: AsyncSession, server_id: str) -> list[dict]:
-    r = await db.execute(
+async def list_server_user_groups(db: AsyncSession, server_id: str, tenant_id: str | None = None) -> list[dict]:
+    q = (
         select(ServerUserGroupAccess, UserGroup.name)
         .join(UserGroup, UserGroup.id == ServerUserGroupAccess.user_group_id)
         .where(ServerUserGroupAccess.server_id == server_id)
     )
+    if tenant_id is not None:
+        q = q.where(UserGroup.tenant_id == tenant_id)
+    r = await db.execute(q)
     return [
         {"user_group_id": row[0].user_group_id, "name": row[1], "role": row[0].role}
         for row in r.all()

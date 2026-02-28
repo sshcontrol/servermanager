@@ -55,15 +55,39 @@ async def register_server(
         from app.services.tenant_service import TenantService
         await TenantService.check_server_limit(db, tenant_id)
     key_row = await PlatformKeyService.get_key(db, tenant_id=tenant_id)
-    if not key_row:
-        raise HTTPException(status_code=503, detail="Platform SSH key not generated. Admin must regenerate key first.")
+    if key_row:
+        public_key = key_row.public_key
+    else:
+        public_key = await server_service.get_tenant_owner_public_key(db, tenant_id)
+        if not public_key:
+            raise HTTPException(
+                status_code=503,
+                detail="No SSH key configured. Upload your public key on the Key page, or regenerate the platform key in Admin → SSH Key.",
+            )
     server = await server_service.register_server(db, body.hostname, body.ip_address, tenant_id=tenant_id)
     await audit_service.log(
         db, "server_registered",
         resource_type="server", resource_id=server.id,
         details=f"hostname={body.hostname}",
     )
-    return {"id": server.id, "hostname": server.hostname, "public_key": key_row.public_key}
+    return {"id": server.id, "hostname": server.hostname, "public_key": public_key}
+
+
+def _deploy_error_script(message: str) -> str:
+    """Return a shell script that prints an error and exits. Used when deploy script is piped to bash."""
+    escaped = message.replace("'", "'\"'\"'")
+    return f"""#!/bin/bash
+echo "=== SSHCONTROL deploy script error ==="
+echo ""
+echo "Error: {escaped}"
+echo ""
+echo "This usually means:"
+echo "  - Token invalid or expired: Get a fresh token from Server → Add server in your SSHCONTROL dashboard."
+echo "  - Wrong API URL: Use the exact URL from your Add server page (e.g. https://sshcontrol.com)."
+echo "  - API unreachable: Ensure the backend is running and reachable from this server."
+echo ""
+exit 1
+"""
 
 
 @router.get("/deploy/script")
@@ -74,7 +98,11 @@ async def get_deploy_script(
 ):
     dt = await server_service.verify_deployment_token(db, token)
     if not dt:
-        raise HTTPException(status_code=401, detail="Invalid deployment token")
+        # Return a script instead of JSON so "curl ... | sudo bash" shows a clear error
+        script = _deploy_error_script("Invalid deployment token. Token may be expired or from a different instance.")
+        return PlainTextResponse(script, media_type="text/plain", headers={
+            "Content-Disposition": "inline; filename=deploy.sh"
+        })
     settings = get_settings()
     api_url = settings.public_api_url
     script = _deploy_script_content(api_url, token, os_id=os_id)
@@ -88,12 +116,26 @@ async def get_deploy_token(
     db: Annotated[AsyncSession, Depends(get_db)],
     current_user: Annotated[User, Depends(require_superuser)],
 ):
-    """Return deployment token and public API URL so the Add server page can build the correct deploy command."""
+    """Return deployment token and public API URL so the Add server page can build the correct deploy command.
+    Requires 2FA (TOTP) or SMS verification to be enabled first."""
+    has_2fa = bool(current_user.totp_enabled)
+    has_sms = bool(getattr(current_user, "phone_verified", False))
+    if not has_2fa and not has_sms:
+        raise HTTPException(
+            status_code=403,
+            detail="Please enable 2FA (authenticator app) or SMS verification first before adding a server. Go to Profile → Security.",
+        )
     t = await server_service.get_deployment_token(db, tenant_id=current_user.tenant_id)
     if not t:
         raise HTTPException(status_code=503, detail="Deployment token not configured")
     settings = get_settings()
     return {"token": t, "api_url": settings.public_api_url.rstrip("/")}
+
+
+def _validate_server_tenant(server, dt) -> None:
+    """Ensure server belongs to deployment token's tenant. Prevents cross-tenant access."""
+    if server.tenant_id != dt.tenant_id:
+        raise HTTPException(status_code=403, detail="Server does not belong to this deployment token")
 
 
 @router.get("/authorized-keys")
@@ -110,6 +152,7 @@ async def get_authorized_keys(
     server = await server_service.get_server(db, server_id)
     if not server:
         raise HTTPException(status_code=404, detail="Server not found")
+    _validate_server_tenant(server, dt)
     content = await server_service.get_authorized_keys_content(db, server_id)
     return Response(content=content, media_type="text/plain")
 
@@ -128,6 +171,7 @@ async def get_users_keys(
     server = await server_service.get_server(db, server_id)
     if not server:
         raise HTTPException(status_code=404, detail="Server not found")
+    _validate_server_tenant(server, dt)
     users_keys = await server_service.get_users_keys_for_server(db, server_id)
     return {"users": users_keys}
 
@@ -142,6 +186,9 @@ async def get_pending_sync(
     dt = await server_service.verify_deployment_token(db, token)
     if not dt:
         raise HTTPException(status_code=401, detail="Invalid deployment token")
+    server = await server_service.get_server(db, server_id)
+    if server:
+        _validate_server_tenant(server, dt)
     pending = await server_service.get_pending_sync(db, server_id)
     return {"sync": pending}
 
@@ -160,6 +207,9 @@ async def clear_sync(
     dt = await server_service.verify_deployment_token(db, body.token)
     if not dt:
         raise HTTPException(status_code=401, detail="Invalid deployment token")
+    server = await server_service.get_server(db, body.server_id)
+    if server:
+        _validate_server_tenant(server, dt)
     await server_service.clear_sync_requested(db, body.server_id)
     return {"ok": True}
 
@@ -182,6 +232,7 @@ async def report_sessions(
     server = await server_service.get_server(db, body.server_id)
     if not server:
         raise HTTPException(status_code=404, detail="Server not found")
+    _validate_server_tenant(server, dt)
     await server_service.save_session_report(db, body.server_id, body.usernames)
     return {"ok": True}
 
@@ -484,7 +535,7 @@ async def list_server_user_groups(
     servers_list = await server_service.list_servers(db, str(current_user.id), _is_admin(current_user), tenant_id=current_user.tenant_id)
     if not any(s.id == server_id for s in servers_list):
         raise HTTPException(status_code=404, detail="Server not found")
-    return await user_group_service.list_server_user_groups(db, server_id)
+    return await user_group_service.list_server_user_groups(db, server_id, current_user.tenant_id)
 
 
 @router.post("/{server_id}/user-groups")
@@ -502,9 +553,11 @@ async def add_server_user_group(
     servers_list = await server_service.list_servers(db, str(current_user.id), _is_admin(current_user), tenant_id=current_user.tenant_id)
     if not any(s.id == server_id for s in servers_list):
         raise HTTPException(status_code=404, detail="Server not found")
-    ok = await user_group_service.set_server_user_group_access(db, server_id, body.user_group_id, body.role)
+    if not current_user.tenant_id:
+        raise HTTPException(status_code=403, detail="User groups are only available for tenant admins")
+    ok = await user_group_service.set_server_user_group_access(db, server_id, body.user_group_id, body.role, current_user.tenant_id)
     if not ok:
-        raise HTTPException(status_code=400, detail="User group not found")
+        raise HTTPException(status_code=400, detail="User group not found or must belong to this tenant")
     await server_service.set_sync_requested(db, server_id)
     server_name = getattr(server, "friendly_name", None) or server.hostname
     sync_results = [await _do_sync_for_server(db, server, server_id, server_name)]
@@ -524,7 +577,11 @@ async def remove_server_user_group(
     servers_list = await server_service.list_servers(db, str(current_user.id), _is_admin(current_user), tenant_id=current_user.tenant_id)
     if not any(s.id == server_id for s in servers_list):
         raise HTTPException(status_code=404, detail="Server not found")
-    await user_group_service.remove_server_user_group_access(db, server_id, user_group_id)
+    if not current_user.tenant_id:
+        raise HTTPException(status_code=403, detail="User groups are only available for tenant admins")
+    ok = await user_group_service.remove_server_user_group_access(db, server_id, user_group_id, current_user.tenant_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="User group not found")
     await server_service.set_sync_requested(db, server_id)
     server_name = getattr(server, "friendly_name", None) or server.hostname
     sync_results = [await _do_sync_for_server(db, server, server_id, server_name)]
@@ -611,13 +668,62 @@ HOSTNAME=$(hostname -f 2>/dev/null || hostname)
 IP=$(curl -s --connect-timeout 3 -4 https://ifconfig.me 2>/dev/null || curl -s --connect-timeout 2 -4 https://icanhazip.com 2>/dev/null || echo "")
 
 BODY='{{"token": "'"$TOKEN"'", "hostname": "'"$HOSTNAME"'", "ip_address": "'"$IP"'"}}'
-RESP=$(curl -s -X POST "$API_URL/api/servers/register" -H "Content-Type: application/json" -d "$BODY")
+REGISTER_TMP=$(mktemp 2>/dev/null || echo "/tmp/sshcontrol_register_$$")
+HTTP_CODE=$(curl -s -w "%{{http_code}}" -o "$REGISTER_TMP" -X POST "$API_URL/api/servers/register" -H "Content-Type: application/json" -d "$BODY" --connect-timeout 15 --max-time 30 2>/dev/null || echo "000")
+RESP=$(cat "$REGISTER_TMP" 2>/dev/null)
+rm -f "$REGISTER_TMP"
 
-SERVER_ID=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('id',''))" 2>/dev/null || true)
+# Parse response: extract server id or error detail
+PARSE_RESULT=$(echo "$RESP" | python3 -c "
+import sys, json
+try:
+    raw = sys.stdin.read()
+    if not raw.strip():
+        print('ERR:Empty response (connection failed or API unreachable)')
+        sys.exit(0)
+    d = json.loads(raw)
+    sid = d.get('id', '')
+    if sid:
+        print('OK:' + sid)
+    else:
+        detail = d.get('detail', '')
+        if isinstance(detail, list) and detail:
+            first = detail[0]
+            msg = first.get('msg', first.get('loc', str(first)))
+            if isinstance(msg, list):
+                msg = '.'.join(str(x) for x in msg)
+            detail = str(msg)
+        elif not isinstance(detail, str):
+            detail = str(detail) if detail else 'Unknown error'
+        print('ERR:' + (detail or 'Unknown error'))
+except json.JSONDecodeError:
+    print('ERR:Invalid JSON response (API may have returned HTML or an error page)')
+except Exception:
+    print('ERR:Failed to parse response')
+" 2>/dev/null || echo "ERR:Failed to parse response")
+
+SERVER_ID=""
+if [[ "$PARSE_RESULT" == OK:* ]]; then
+  SERVER_ID="${{PARSE_RESULT#OK:}}"
+fi
 
 if [ -z "$SERVER_ID" ]; then
-  echo "Failed to register server. Check token and API URL."
-  echo "Response: $RESP"
+  echo "=== SSHCONTROL deploy failed ==="
+  echo ""
+  echo "API URL: $API_URL"
+  echo "Hostname: $HOSTNAME"
+  echo "HTTP status: $HTTP_CODE"
+  if [[ "$PARSE_RESULT" == ERR:* ]]; then
+    echo "Error: ${{PARSE_RESULT#ERR:}}"
+  fi
+  echo ""
+  echo "Raw response: $RESP"
+  echo ""
+  echo "Troubleshooting:"
+  echo "  - Invalid token / 401: Get a fresh token from Server → Add server in your SSHCONTROL dashboard."
+  echo "  - No SSH key: Upload your public key on the Key page, or regenerate platform key in Admin → SSH Key."
+  echo "  - Connection refused / timeout: Ensure the API is reachable from this server (firewall, PUBLIC_API_URL)."
+  echo "  - Wrong API URL: Use the exact URL from your Add server page (e.g. https://sshcontrol.com)."
   exit 1
 fi
 
@@ -625,7 +731,14 @@ mkdir -p ~/.ssh
 chmod 700 ~/.ssh
 
 # Fetch platform key for root authorized_keys (admin management key only; users connect via per-user accounts)
-curl -s "$API_URL/api/servers/authorized-keys?token=$TOKEN&server_id=$SERVER_ID" -o ~/.ssh/authorized_keys
+AK_TMP=$(mktemp 2>/dev/null || echo "/tmp/sshcontrol_ak_$$")
+AK_HTTP=$(curl -s -w "%{{http_code}}" -o "$AK_TMP" "$API_URL/api/servers/authorized-keys?token=$TOKEN&server_id=$SERVER_ID" --connect-timeout 15 --max-time 30 2>/dev/null || echo "000")
+if [ "$AK_HTTP" != "200" ] || ! head -1 "$AK_TMP" 2>/dev/null | grep -q "ssh-"; then
+  echo "Warning: Failed to fetch authorized_keys (HTTP $AK_HTTP). Root SSH via panel key may not work until sync succeeds."
+  [ -s "$AK_TMP" ] && echo "  Response: $(head -c 300 "$AK_TMP")"
+fi
+cp "$AK_TMP" ~/.ssh/authorized_keys 2>/dev/null || true
+rm -f "$AK_TMP"
 chmod 600 ~/.ssh/authorized_keys
 
 # Persist SERVER_ID and TOKEN for re-sync (cron). Install cron to re-fetch every 5 min so revocations take effect.

@@ -15,7 +15,7 @@ export default function ProfileImportExport({ embedded }: ProfileImportExportPro
       <div className={embedded ? "profile-section" : "container app-page"}>
         <div className="profile-section-card">
           <p className="error-msg">Admin access required.</p>
-          {!embedded && <Link to="/profile">← Profile</Link>}
+          {!embedded && <Link to="/">← Dashboard</Link>}
         </div>
       </div>
     );
@@ -25,7 +25,7 @@ export default function ProfileImportExport({ embedded }: ProfileImportExportPro
     <>
       {!embedded && (
         <div className="page-header">
-          <Link to="/profile" className="btn-link">← Profile</Link>
+          <Link to="/" className="btn-link">← Dashboard</Link>
           <h1 style={{ marginTop: "0.5rem" }}>History Export</h1>
         </div>
       )}

@@ -1,41 +1,32 @@
 import { useState, useEffect } from "react";
 import { useAuth } from "../contexts/AuthContext";
 import { api } from "../api/client";
-import { COUNTRY_CODES, toE164, fromE164, isValidE164 } from "../lib/phone";
 
 export function ProfileAccount() {
   const { user, refreshUser } = useAuth();
+  const canEditCompany = user?.is_tenant_owner === true;
+
   const [username, setUsername] = useState(user?.username ?? "");
-  const [email, setEmail] = useState(user?.email ?? "");
-  const { countryCode: initialCountry, nationalNumber: initialPhone } = fromE164(user?.phone ?? undefined);
-  const [phoneCountryCode, setPhoneCountryCode] = useState(initialCountry || "+1");
-  const [phoneNumber, setPhoneNumber] = useState(initialPhone || "");
+  const [companyName, setCompanyName] = useState(user?.company_name ?? "");
   const [profileSaving, setProfileSaving] = useState(false);
   const [profileMessage, setProfileMessage] = useState<{ type: "error" | "success"; text: string } | null>(null);
 
   useEffect(() => {
     setUsername(user?.username ?? "");
-    setEmail(user?.email ?? "");
-    const { countryCode, nationalNumber } = fromE164(user?.phone ?? undefined);
-    setPhoneCountryCode(countryCode || "+1");
-    setPhoneNumber(nationalNumber || "");
-  }, [user?.username, user?.email, user?.phone]);
+    setCompanyName(user?.company_name ?? "");
+  }, [user?.username, user?.company_name]);
 
   const saveProfile = async (e: React.FormEvent) => {
     e.preventDefault();
     setProfileMessage(null);
-    const phone = toE164(phoneCountryCode, phoneNumber);
-    if (phone && !isValidE164(phone)) {
-      setProfileMessage({ type: "error", text: "Please enter a valid phone number with country code." });
-      return;
-    }
     setProfileSaving(true);
     try {
       await api.patch("/api/users/me", {
         username: username.trim() || undefined,
-        email: email.trim() || undefined,
-        phone: phone || undefined,
       });
+      if (canEditCompany) {
+        await api.patch("/api/tenant/me", { company_name: companyName.trim() });
+      }
       setProfileMessage({ type: "success", text: "Profile updated." });
       await refreshUser();
     } catch (e) {
@@ -49,25 +40,23 @@ export function ProfileAccount() {
     <div className="profile-section">
       <div className="profile-section-card">
         <h2 className="profile-section-title">Account details</h2>
-        <p className="profile-section-desc">Update your username, email, and phone number.</p>
+        <p className="profile-section-desc">Update your username. Email cannot be changed.</p>
         <form onSubmit={saveProfile}>
           <div className="form-group">
             <label htmlFor="profile-username">Username</label>
             <input id="profile-username" type="text" value={username} onChange={(e) => setUsername(e.target.value)} minLength={2} maxLength={100} required />
           </div>
+          {canEditCompany && (
+            <div className="form-group">
+              <label htmlFor="profile-company">Company name</label>
+              <input id="profile-company" type="text" value={companyName} onChange={(e) => setCompanyName(e.target.value)} maxLength={255} placeholder="Your company or organization" />
+              <p className="form-hint">Shown in the dashboard sidebar. Only the tenant owner can edit this.</p>
+            </div>
+          )}
           <div className="form-group">
             <label htmlFor="profile-email">Email</label>
-            <input id="profile-email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} required />
-          </div>
-          <div className="form-group">
-            <label htmlFor="profile-phone">Phone (with country code)</label>
-            <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap", alignItems: "center" }}>
-              <select id="profile-phone" value={phoneCountryCode} onChange={(e) => setPhoneCountryCode(e.target.value)} style={{ minWidth: "120px" }}>
-                {COUNTRY_CODES.map((c) => <option key={c.code} value={c.code}>{c.label}</option>)}
-              </select>
-              <input type="tel" value={phoneNumber} onChange={(e) => setPhoneNumber(e.target.value.replace(/\D/g, "").slice(0, 15))} placeholder="2345678900" style={{ flex: "1", minWidth: "140px" }} />
-            </div>
-            <p className="form-hint">Used for SMS verification. Enter number without leading zero.</p>
+            <input id="profile-email" type="email" value={user?.email ?? ""} readOnly disabled style={{ opacity: 0.8, cursor: "not-allowed" }} />
+            <p className="form-hint">Email address cannot be changed. <a href="mailto:info@sshcontrol.com" style={{ color: "var(--accent)", textDecoration: "none" }}>Contact support</a> if you need to update it.</p>
           </div>
           <button type="submit" className="primary" disabled={profileSaving}>{profileSaving ? "Saving…" : "Save changes"}</button>
         </form>

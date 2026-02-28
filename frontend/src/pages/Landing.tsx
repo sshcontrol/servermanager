@@ -4,6 +4,7 @@ import { useAuth } from "../contexts/AuthContext";
 import { api } from "../api/client";
 import Logo from "../components/Logo";
 import LogoSpinner from "../components/LogoSpinner";
+import { validatePassword, PASSWORD_HINT } from "../utils/password";
 import "./Landing.css";
 
 const API_BASE = import.meta.env.VITE_API_URL || "";
@@ -25,7 +26,6 @@ const faqs: FAQItem[] = [
   { q: "What is SSHCONTROL?", a: "SSHCONTROL is a centralised platform for managing SSH keys, server access, and user permissions across your entire infrastructure from a single dashboard." },
   { q: "How does SSHCONTROL work?", a: "Simply add your servers, invite users, and assign access permissions. SSHCONTROL syncs SSH keys and user accounts across all your servers automatically via a lightweight agent." },
   { q: "Is there a free plan?", a: "Yes! Our free plan lets you manage up to 3 users and 5 servers at no cost. You can upgrade anytime as your infrastructure grows." },
-  { q: "Can I manage multiple teams?", a: "Absolutely. Each organization gets an isolated tenant with its own users, servers, groups, and SSH keys. No cross-tenant access is possible." },
   { q: "What Linux distributions are supported?", a: "SSHCONTROL supports all major Linux distributions including Ubuntu, Debian, CentOS, RHEL, AlmaLinux, Rocky Linux, and more." },
   { q: "How secure is SSHCONTROL?", a: "Security is at our core. We use end-to-end encryption, two-factor authentication, IP whitelisting, and full audit logging. Your SSH keys never leave your servers." },
   { q: "Can I enforce SSH Two-Factor Authentication?", a: "Yes. You can enable 2FA for all SSH sessions across your infrastructure with one click, blocking 99.9% of automated attacks." },
@@ -38,7 +38,7 @@ const features = [
   { icon: "shield", title: "Two-Factor Authentication", desc: "Enable 2FA for SSH sessions across your entire infrastructure with a single toggle." },
   { icon: "activity", title: "Audit Logs & Monitoring", desc: "Track every action, login, and permission change. Export logs for compliance reporting." },
   { icon: "server", title: "Agent Deployment", desc: "Deploy our lightweight agent in seconds. Supports all major Linux distributions via standard packages." },
-  { icon: "lock", title: "Multi-Tenant Isolation", desc: "Complete data isolation between organizations. Each tenant has its own users, servers, and encryption keys." },
+  { icon: "lock", title: "Easy to Scale", desc: "Upgrade your plan anytime as you grow. Add users and servers in seconds from your dashboard." },
 ];
 
 const benefits = [
@@ -114,6 +114,8 @@ function AuthModal({ defaultTab, onClose }: { defaultTab: "signin" | "signup"; o
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [totpCode, setTotpCode] = useState("");
+  const [smsCode, setSmsCode] = useState("");
+  const [pendingToken, setPendingToken] = useState<string | null>(null);
   const [loginError, setLoginError] = useState("");
   const [loginLoading, setLoginLoading] = useState(false);
   const [resendLoading, setResendLoading] = useState(false);
@@ -131,6 +133,44 @@ function AuthModal({ defaultTab, onClose }: { defaultTab: "signin" | "signup"; o
   const [signupSuccess, setSignupSuccess] = useState("");
   const [showTerms, setShowTerms] = useState(false);
   const [termsText, setTermsText] = useState("");
+  const [googleOAuthEnabled, setGoogleOAuthEnabled] = useState(false);
+  const [recaptchaSiteKey, setRecaptchaSiteKey] = useState<string | null>(null);
+  const recaptchaRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    fetch(`${API_BASE}/api/public/platform-settings`)
+      .then((r) => (r.ok ? r.json() : {}))
+      .then((s: { google_oauth_client_id?: string; recaptcha_site_key?: string }) => {
+        setGoogleOAuthEnabled(!!s?.google_oauth_client_id?.trim());
+        const key = s?.recaptcha_site_key?.trim();
+        if (key) setRecaptchaSiteKey(key);
+      })
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    if (!recaptchaSiteKey || !recaptchaRef.current || tab !== "signin") return;
+    const siteKey = recaptchaSiteKey;
+    const container = recaptchaRef.current;
+    const renderWidget = () => {
+      if (typeof (window as unknown as { grecaptcha?: { render: (c: HTMLElement, p: { sitekey: string; theme?: string }) => number } }).grecaptcha !== "undefined" && container) {
+        try {
+          (window as unknown as { grecaptcha: { render: (c: HTMLElement, p: { sitekey: string; theme?: string }) => number } }).grecaptcha.render(container, { sitekey: siteKey, theme: "dark" });
+        } catch { /* ignore */ }
+      }
+    };
+    if (typeof (window as unknown as { grecaptcha?: unknown }).grecaptcha !== "undefined") {
+      renderWidget();
+      return;
+    }
+    const cbName = "___recaptchaAuthModalCb";
+    (window as unknown as Record<string, unknown>)[cbName] = renderWidget;
+    const script = document.createElement("script");
+    script.src = `https://www.google.com/recaptcha/api.js?onload=${cbName}&render=explicit`;
+    script.async = true;
+    document.head.appendChild(script);
+    return () => { delete (window as unknown as Record<string, unknown>)[cbName]; };
+  }, [recaptchaSiteKey, tab]);
 
   useEffect(() => {
     if (showTerms && !termsText) {
@@ -141,16 +181,55 @@ function AuthModal({ defaultTab, onClose }: { defaultTab: "signin" | "signup"; o
     }
   }, [showTerms, termsText]);
 
+  const isRecaptchaWidgetRendered = () => recaptchaRef.current?.querySelector("iframe") != null;
+
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoginError("");
     setResendSent(false);
+    if (pendingToken && smsCode.length < 4) {
+      setLoginError("Enter the 4-digit code from your phone");
+      return;
+    }
     setLoginLoading(true);
     try {
-      await login(username, password, totpCode || undefined);
+      let recaptchaToken: string | undefined;
+      if (!pendingToken && recaptchaSiteKey && (window as unknown as { grecaptcha?: { getResponse: () => string } }).grecaptcha) {
+        recaptchaToken = (window as unknown as { grecaptcha: { getResponse: () => string } }).grecaptcha.getResponse();
+        if (!recaptchaToken) {
+          if (!isRecaptchaWidgetRendered()) {
+            setLoginError("Captcha could not load. Please refresh. Add your domain in Google reCAPTCHA admin.");
+          } else {
+            setLoginError("Please complete the captcha verification");
+          }
+          setLoginLoading(false);
+          return;
+        }
+      }
+      await login(
+        username,
+        password,
+        totpCode || undefined,
+        recaptchaToken,
+        pendingToken ? { pendingToken, smsCode } : undefined
+      );
+      if (recaptchaSiteKey && (window as unknown as { grecaptcha?: { reset: () => void } }).grecaptcha) {
+        (window as unknown as { grecaptcha: { reset: () => void } }).grecaptcha.reset();
+      }
       onClose();
     } catch (err) {
+      const smsErr = err as { requiresSms?: boolean; pendingToken?: string };
+      if (smsErr.requiresSms && smsErr.pendingToken) {
+        setPendingToken(smsErr.pendingToken);
+        setSmsCode("");
+        setLoginError("");
+        setLoginLoading(false);
+        return;
+      }
       setLoginError(err instanceof Error ? err.message : "Login failed");
+      if (recaptchaSiteKey && (window as unknown as { grecaptcha?: { reset: () => void } }).grecaptcha) {
+        (window as unknown as { grecaptcha: { reset: () => void } }).grecaptcha.reset();
+      }
     } finally {
       setLoginLoading(false);
     }
@@ -173,6 +252,8 @@ function AuthModal({ defaultTab, onClose }: { defaultTab: "signin" | "signup"; o
   const handleSignup = async (e: React.FormEvent) => {
     e.preventDefault();
     setSignupError("");
+    const pwdErr = validatePassword(signupPass);
+    if (pwdErr) { setSignupError(pwdErr); return; }
     if (signupPass !== confirmPass) { setSignupError("Passwords do not match"); return; }
     if (!acceptTerms) { setSignupError("You must accept the terms and conditions"); return; }
     setSignupLoading(true);
@@ -231,13 +312,25 @@ function AuthModal({ defaultTab, onClose }: { defaultTab: "signin" | "signup"; o
                 <input id="auth-pass" type="password" value={password} onChange={e => setPassword(e.target.value)} required autoComplete="current-password" placeholder="********" />
               </div>
             </div>
-            <div className="auth-field">
-              <label htmlFor="auth-totp">2FA Code <span className="auth-optional">optional</span></label>
-              <div className="auth-input-wrap">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
-                <input id="auth-totp" type="text" value={totpCode} onChange={e => setTotpCode(e.target.value)} maxLength={6} autoComplete="one-time-code" placeholder="000000" />
+            {!pendingToken && (
+              <div className="auth-field">
+                <label htmlFor="auth-totp">2FA Code <span className="auth-optional">(if enabled)</span></label>
+                <div className="auth-input-wrap">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+                  <input id="auth-totp" type="text" value={totpCode} onChange={e => setTotpCode(e.target.value)} maxLength={6} autoComplete="one-time-code" placeholder="000000" />
+                </div>
               </div>
-            </div>
+            )}
+            {pendingToken && (
+              <div className="auth-field">
+                <label htmlFor="auth-sms">SMS verification code</label>
+                <div className="auth-input-wrap">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                  <input id="auth-sms" type="text" value={smsCode} onChange={e => setSmsCode(e.target.value.replace(/\D/g, "").slice(0, 8))} placeholder="0000" maxLength={8} inputMode="numeric" autoComplete="one-time-code" />
+                </div>
+                <p style={{ fontSize: "0.8rem", color: "var(--text-muted)", marginTop: "0.25rem" }}>Enter the 4-digit code sent to your phone.</p>
+              </div>
+            )}
             {loginError && <p className="auth-error">{loginError}</p>}
             {loginError?.toLowerCase().includes("verify") && username.includes("@") && (
               <p className="auth-links" style={{ marginTop: "0.5rem" }}>
@@ -246,6 +339,29 @@ function AuthModal({ defaultTab, onClose }: { defaultTab: "signin" | "signup"; o
                 </button>
                 {resendSent && <span style={{ marginLeft: "0.5rem", color: "var(--text-secondary)", fontSize: "0.9rem" }}>Check your inbox.</span>}
               </p>
+            )}
+            {recaptchaSiteKey && (
+              <div className="auth-field">
+                <div ref={recaptchaRef} style={{ minHeight: 78, display: "flex", alignItems: "center", justifyContent: "flex-start" }} />
+              </div>
+            )}
+            {googleOAuthEnabled && (
+              <>
+                <a
+                  href={`${API_BASE || ""}/api/auth/google?mode=login`}
+                  className="auth-google-btn"
+                  style={{
+                    display: "flex", alignItems: "center", justifyContent: "center", gap: "0.5rem",
+                    padding: "0.75rem 1rem", borderRadius: 8, border: "1px solid rgba(255,255,255,0.2)",
+                    background: "rgba(255,255,255,0.05)", color: "inherit", textDecoration: "none",
+                    fontSize: "0.95rem", fontWeight: 500, marginBottom: "1rem",
+                  }}
+                >
+                  <svg width="18" height="18" viewBox="0 0 24 24"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>
+                  Sign in with Google
+                </a>
+                <div style={{ textAlign: "center", padding: "0.25rem 0", fontSize: "0.85rem", color: "var(--text-muted)" }}>— or —</div>
+              </>
             )}
             <button type="submit" className="auth-submit" disabled={loginLoading}>
               {loginLoading ? "Signing in..." : "Sign In"}
@@ -258,7 +374,38 @@ function AuthModal({ defaultTab, onClose }: { defaultTab: "signin" | "signup"; o
 
         {/* ─── Sign Up ─── */}
         {tab === "signup" && !signupSuccess && (
-          <form onSubmit={handleSignup} className="auth-form" autoComplete="on">
+          <div className="auth-form" style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
+            <label className="auth-terms">
+              <input type="checkbox" checked={acceptTerms} onChange={e => setAcceptTerms(e.target.checked)} />
+              <span>I agree to the{" "}
+                <button type="button" className="auth-terms-link" onClick={() => setShowTerms(true)}>Terms and Conditions</button>
+              </span>
+            </label>
+            {googleOAuthEnabled && (
+              <>
+                <a
+                  href={acceptTerms ? `${API_BASE || ""}/api/auth/google?mode=signup&accept_terms=true` : "#"}
+                  className="auth-google-btn"
+                  style={{
+                    display: "flex", alignItems: "center", justifyContent: "center", gap: "0.5rem",
+                    padding: "0.75rem 1rem", borderRadius: 8, border: "1px solid rgba(255,255,255,0.2)",
+                    background: "rgba(255,255,255,0.05)", color: "inherit", textDecoration: "none",
+                    fontSize: "0.95rem", fontWeight: 500, marginBottom: "0.25rem",
+                  }}
+                  onClick={(e) => {
+                    if (!acceptTerms) {
+                      e.preventDefault();
+                      setSignupError("You must accept the terms and conditions to sign up with Google");
+                    }
+                  }}
+                >
+                  <svg width="18" height="18" viewBox="0 0 24 24"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>
+                  Sign up with Google
+                </a>
+                <div style={{ textAlign: "center", padding: "0.25rem 0", fontSize: "0.85rem", color: "var(--text-muted)" }}>— or —</div>
+              </>
+            )}
+          <form onSubmit={handleSignup} className="auth-form" autoComplete="on" style={{ marginTop: 0 }}>
             <div className="auth-row">
               <div className="auth-field">
                 <label htmlFor="auth-company">Company Name</label>
@@ -287,7 +434,7 @@ function AuthModal({ defaultTab, onClose }: { defaultTab: "signin" | "signup"; o
                 <label htmlFor="auth-signup-pass">Password</label>
                 <div className="auth-input-wrap">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="18" height="11" x="3" y="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
-                  <input id="auth-signup-pass" type="password" value={signupPass} onChange={e => setSignupPass(e.target.value)} required minLength={8} autoComplete="new-password" placeholder="Min 8 chars" />
+                  <input id="auth-signup-pass" type="password" value={signupPass} onChange={e => setSignupPass(e.target.value)} required minLength={8} autoComplete="new-password" placeholder={PASSWORD_HINT} />
                 </div>
               </div>
               <div className="auth-field">
@@ -298,17 +445,12 @@ function AuthModal({ defaultTab, onClose }: { defaultTab: "signin" | "signup"; o
                 </div>
               </div>
             </div>
-            <label className="auth-terms">
-              <input type="checkbox" checked={acceptTerms} onChange={e => setAcceptTerms(e.target.checked)} />
-              <span>I agree to the{" "}
-                <button type="button" className="auth-terms-link" onClick={() => setShowTerms(true)}>Terms and Conditions</button>
-              </span>
-            </label>
             {signupError && <p className="auth-error">{signupError}</p>}
             <button type="submit" className="auth-submit" disabled={signupLoading}>
               {signupLoading ? "Creating account..." : "Create Account"}
             </button>
           </form>
+          </div>
         )}
 
         {/* ─── Sign Up Success ─── */}
@@ -392,8 +534,7 @@ export default function Landing() {
             <a href="#contact" onClick={e => { e.preventDefault(); navClick("contact"); }}>Contact</a>
           </div>
           <div className="land-nav-actions">
-            <button className="land-nav-signin" onClick={() => setAuthModal("signin")}>Sign In</button>
-            <button className="land-nav-signup" onClick={() => setAuthModal("signup")}>Sign Up</button>
+            <button className="land-nav-panel" onClick={() => setAuthModal("signin")}>Panel</button>
           </div>
         </div>
       </nav>
@@ -598,7 +739,7 @@ export default function Landing() {
             </div>
             <div>
               <h4>Account</h4>
-              <button className="land-footer-link-btn" onClick={() => setAuthModal("signin")}>Sign In</button>
+              <Link to="/login" className="land-footer-link-btn" style={{ display: "inline-block", marginBottom: "0.25rem" }}>Sign In</Link>
               <button className="land-footer-link-btn" onClick={() => setAuthModal("signup")}>Sign Up</button>
             </div>
           </div>

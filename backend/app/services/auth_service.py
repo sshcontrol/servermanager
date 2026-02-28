@@ -2,7 +2,7 @@ import logging
 from typing import Optional
 
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, or_
+from sqlalchemy import select, or_, func
 from fastapi import HTTPException, status
 
 from app.models import User
@@ -17,6 +17,7 @@ from app.core.security import (
     generate_totp_secret,
     get_totp_uri,
     verify_totp,
+    validate_password_strength,
 )
 
 
@@ -31,8 +32,13 @@ class AuthService:
         password: str,
         totp_code: Optional[str] = None,
     ) -> tuple[User, str, str]:
+        # Case-insensitive match for username/email (e.g. User@Email.com vs user@email.com)
+        ident = username.strip().lower()
         result = await db.execute(
-            select(User).where(or_(User.username == username, User.email == username))
+            select(User).where(or_(
+                func.lower(User.username) == ident,
+                func.lower(User.email) == ident,
+            ))
         )
         user = result.scalar_one_or_none()
         if not user or not user.is_active:
@@ -65,6 +71,35 @@ class AuthService:
                     status_code=status.HTTP_401_UNAUTHORIZED,
                     detail="Invalid TOTP code",
                 )
+        access = create_access_token(str(user.id))
+        refresh = create_refresh_token(str(user.id))
+        return user, access, refresh
+
+    @staticmethod
+    async def authenticate_google(
+        db: AsyncSession,
+        email: str,
+        google_id: str,
+    ) -> tuple[User, str, str] | None:
+        """Find user by email or google_id. Returns (user, access, refresh) or None if not found."""
+        from sqlalchemy import or_
+        result = await db.execute(
+            select(User)
+            .where(
+                User.is_active == True,  # noqa: E712
+                or_(User.email == email, User.google_id == google_id),
+            )
+            .limit(1)
+        )
+        user = result.scalars().first()
+        if not user:
+            return None
+        if not user.email_verified:
+            user.email_verified = True
+            await db.flush()
+        if not user.google_id:
+            user.google_id = google_id
+            await db.flush()
         access = create_access_token(str(user.id))
         refresh = create_refresh_token(str(user.id))
         return user, access, refresh
@@ -140,10 +175,12 @@ class AuthService:
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Current password is incorrect",
             )
-        if len(new_password) < 8:
+        try:
+            validate_password_strength(new_password)
+        except ValueError as e:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="New password must be at least 8 characters",
+                detail=str(e),
             )
         user.hashed_password = get_password_hash(new_password)
         await db.flush()

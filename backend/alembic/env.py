@@ -15,7 +15,10 @@ from app.models import (  # noqa: F401
     UserGroup, ServerUserGroupAccess, user_group_members,
     DeploymentToken, AuditLog,
     IpWhitelistSettings, IpWhitelistEntry,
+    PlatformSettings, Notification, PaymentTransaction,
+    SmppSettings, SmppCallback,
 )
+from app.models.tenant import PhoneVerificationToken, LoginSmsToken  # noqa: F401
 
 config = context.config
 if config.config_file_name is not None:

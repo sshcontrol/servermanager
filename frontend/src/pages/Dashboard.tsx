@@ -27,7 +27,6 @@ export default function Dashboard() {
   const [serverStats, setServerStats] = useState<ServerStats | null>(null);
   const [userStats, setUserStats] = useState<UserStats | null>(null);
   const [myGroups, setMyGroups] = useState<MyGroups | null>(null);
-  const [hasSshKey, setHasSshKey] = useState<boolean | null>(null);
 
   useEffect(() => {
     api
@@ -46,15 +45,10 @@ export default function Dashboard() {
     api.get<MyGroups>("/api/users/me/groups").then(setMyGroups).catch(() => setMyGroups(null));
   }, []);
 
-  useEffect(() => {
-    if (!isAdmin) {
-      api.get<{ has_key: boolean }>("/api/users/me/ssh-key").then((d) => setHasSshKey(d.has_key)).catch(() => setHasSshKey(null));
-    }
-  }, [isAdmin]);
-
   if (isAdmin) {
     return (
-      <div className="dashboard-page">
+      <div className="container app-page dashboard-page">
+        <div className="dashboard-panel">
         <header className="dashboard-header">
           <h1>Dashboard</h1>
           <p className="dashboard-welcome">Welcome back, <strong>{user?.username}</strong></p>
@@ -113,12 +107,14 @@ export default function Dashboard() {
             </div>
           </Link>
         </div>
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="dashboard-page">
+    <div className="container app-page dashboard-page">
+      <div className="dashboard-panel">
       <header className="dashboard-header">
         <h1>Dashboard</h1>
         <p className="dashboard-welcome">Welcome back, <strong>{user?.username}</strong></p>
@@ -136,35 +132,7 @@ export default function Dashboard() {
             </span>
           </Link>
         </div>
-        <div className="dashboard-card dashboard-card-link">
-          <Link to="/profile" className="dashboard-card-link-inner">
-            <span className="dashboard-card-link-icon">Profile</span>
-            <span className="dashboard-card-link-text">Profile</span>
-            <span className="dashboard-card-link-desc">Account info and keys</span>
-          </Link>
-        </div>
-        <div className="dashboard-card dashboard-card-link">
-          <Link to="/profile/keys" className="dashboard-card-link-inner">
-            <span className="dashboard-card-link-icon">Key</span>
-            <span className="dashboard-card-link-text">SSH Key</span>
-            <span className="dashboard-card-link-desc">
-              {hasSshKey === false ? "Generate your key (PEM/PPK) to connect to servers" : "Manage your SSH key for server access"}
-            </span>
-          </Link>
-        </div>
       </div>
-
-      {!isAdmin && hasSshKey === false && (
-        <section className="card" style={{ marginTop: "1.5rem", borderColor: "var(--accent)", background: "rgba(var(--accent-rgb, 45, 212, 191), 0.08)" }}>
-          <h2 className="card-subtitle">Generate your SSH key</h2>
-          <p style={{ color: "var(--text-muted)", marginBottom: "1rem" }}>
-            You don&apos;t have an SSH key yet. Generate one to connect to your assigned servers. Your PEM and PPK files will be created for you.
-          </p>
-          <Link to="/profile/keys" className="primary" style={{ display: "inline-block", textDecoration: "none", padding: "0.5rem 1.25rem" }}>
-            Generate key
-          </Link>
-        </section>
-      )}
 
       {myGroups && (myGroups.user_groups.length > 0 || myGroups.server_groups.length > 0 || myGroups.servers.length > 0) && (
         <section className="card" style={{ marginTop: "1.5rem" }}>
@@ -199,6 +167,7 @@ export default function Dashboard() {
           )}
         </section>
       )}
+      </div>
     </div>
   );
 }
