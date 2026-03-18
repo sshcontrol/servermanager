@@ -1,9 +1,11 @@
 import { useState, useEffect } from "react";
 import { useAuth } from "../contexts/AuthContext";
+import { useToast } from "../components/Toast";
 import { api } from "../api/client";
 
 export function ProfileAccount() {
   const { user, refreshUser } = useAuth();
+  const { showSuccessModal } = useToast();
   const canEditCompany = user?.is_tenant_owner === true;
 
   const [username, setUsername] = useState(user?.username ?? "");
@@ -27,7 +29,7 @@ export function ProfileAccount() {
       if (canEditCompany) {
         await api.patch("/api/tenant/me", { company_name: companyName.trim() });
       }
-      setProfileMessage({ type: "success", text: "Profile updated." });
+      showSuccessModal("Profile updated.");
       await refreshUser();
     } catch (e) {
       setProfileMessage({ type: "error", text: e instanceof Error ? e.message : "Failed to update profile" });
@@ -60,7 +62,7 @@ export function ProfileAccount() {
           </div>
           <button type="submit" className="primary" disabled={profileSaving}>{profileSaving ? "Saving…" : "Save changes"}</button>
         </form>
-        {profileMessage && <p className={profileMessage.type === "error" ? "error-msg" : "success-msg"} style={{ marginTop: "0.75rem" }}>{profileMessage.text}</p>}
+        {profileMessage && <p className="error-msg" style={{ marginTop: "0.75rem" }}>{profileMessage.text}</p>}
       </div>
     </div>
   );

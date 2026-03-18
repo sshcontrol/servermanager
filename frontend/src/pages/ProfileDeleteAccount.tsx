@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useAuth } from "../contexts/AuthContext";
 import { api } from "../api/client";
+import Toggle from "../components/Toggle";
 
 export default function ProfileDeleteAccount() {
   const { user } = useAuth();
@@ -110,13 +111,8 @@ export default function ProfileDeleteAccount() {
                 <p>By closing your account, you consent to permanently delete it. You will lose access to all servers and data.</p>
               </div>
             )}
-            <label style={{ display: "flex", alignItems: "flex-start", gap: "0.5rem", marginTop: "1rem", cursor: "pointer" }}>
-              <input
-                type="checkbox"
-                checked={consentChecked}
-                onChange={(e) => setConsentChecked(e.target.checked)}
-                style={{ width: "auto", marginTop: "0.2rem", accentColor: "var(--danger, #ef4444)" }}
-              />
+            <label style={{ display: "flex", alignItems: "center", gap: "0.75rem", marginTop: "1rem", cursor: "pointer" }}>
+              <Toggle checked={consentChecked} onChange={setConsentChecked} />
               <span>I understand and consent to close my account. This cannot be undone.</span>
             </label>
             {error && <p className="error-msg" style={{ marginTop: "0.75rem" }}>{error}</p>}

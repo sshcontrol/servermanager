@@ -23,10 +23,11 @@ class RegisterBody(BaseModel):
 
 class ServerAccessBody(BaseModel):
     user_id: str
-    role: str  # admin | user
+    role: str  # root | user (Linux user type for server assignment)
 
 
 def _server_to_item(s):
+    groups = getattr(s, "server_groups", None) or []
     return {
         "id": s.id,
         "hostname": s.hostname,
@@ -35,6 +36,8 @@ def _server_to_item(s):
         "description": s.description,
         "status": s.status,
         "created_at": s.created_at.isoformat(),
+        "sync_requested_at": getattr(s, "sync_requested_at", None).isoformat() if getattr(s, "sync_requested_at", None) else None,
+        "server_groups": [{"id": g.id, "name": g.name} for g in groups],
     }
 
 
@@ -218,6 +221,44 @@ class ReportSessionsBody(BaseModel):
     token: str
     server_id: str
     usernames: list[str]
+
+
+class VerifySsh2FABody(BaseModel):
+    token: str
+    server_id: str
+    linux_username: str
+    totp_code: str
+
+
+@router.post("/verify-ssh-2fa")
+async def verify_ssh_2fa(
+    body: VerifySsh2FABody,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Server-side 2FA gate calls this to verify TOTP when user has 2FA enabled. Used for SSH 2FA."""
+    from app.core.security import verify_totp
+
+    dt = await server_service.verify_deployment_token(db, body.token)
+    if not dt:
+        raise HTTPException(status_code=401, detail="Invalid deployment token")
+    server = await server_service.get_server(db, body.server_id)
+    if not server:
+        raise HTTPException(status_code=404, detail="Server not found")
+    _validate_server_tenant(server, dt)
+    linux_name = (body.linux_username or "").strip()
+    if not linux_name:
+        raise HTTPException(status_code=400, detail="linux_username required")
+    user = await server_service.get_user_by_linux_username_for_server(db, body.server_id, linux_name)
+    if not user:
+        raise HTTPException(status_code=401, detail="User not found")
+    if not user.totp_enabled or not user.totp_secret:
+        raise HTTPException(status_code=400, detail="2FA not enabled for this user")
+    code = (body.totp_code or "").strip().replace(" ", "")
+    if len(code) < 6:
+        raise HTTPException(status_code=400, detail="Invalid code")
+    if not verify_totp(user.totp_secret, code):
+        raise HTTPException(status_code=401, detail="Invalid 2FA code")
+    return {"ok": True}
 
 
 @router.post("/report-sessions")
@@ -470,8 +511,8 @@ async def add_server_access(
     db: Annotated[AsyncSession, Depends(get_db)],
     current_user: Annotated[User, Depends(RequireServersWrite)],
 ):
-    if body.role not in ("admin", "user"):
-        raise HTTPException(status_code=400, detail="role must be admin or user")
+    if body.role not in ("root", "user"):
+        raise HTTPException(status_code=400, detail="role must be root or user")
     server = await server_service.get_server(db, server_id)
     if not server:
         raise HTTPException(status_code=404, detail="Server not found")
@@ -520,7 +561,7 @@ async def remove_server_access_endpoint(
 
 class ServerUserGroupAccessBody(BaseModel):
     user_group_id: str
-    role: str  # admin | user
+    role: str  # root | user (Linux user type for server assignment)
 
 
 @router.get("/{server_id}/user-groups")
@@ -545,8 +586,8 @@ async def add_server_user_group(
     db: Annotated[AsyncSession, Depends(get_db)],
     current_user: Annotated[User, Depends(RequireServersWrite)],
 ):
-    if body.role not in ("admin", "user"):
-        raise HTTPException(status_code=400, detail="role must be admin or user")
+    if body.role not in ("root", "user"):
+        raise HTTPException(status_code=400, detail="role must be root or user")
     server = await server_service.get_server(db, server_id)
     if not server:
         raise HTTPException(status_code=404, detail="Server not found")
@@ -745,7 +786,7 @@ chmod 600 ~/.ssh/authorized_keys
 SYNC_DIR="/etc/sshcontrol"
 if [ -w /etc 2>/dev/null ]; then
   mkdir -p "$SYNC_DIR"
-  chmod 700 "$SYNC_DIR"
+  chmod 755 "$SYNC_DIR"
   echo "$SERVER_ID" > "$SYNC_DIR/server_id"
   echo "$TOKEN" > "$SYNC_DIR/token"
   echo "$API_URL" > "$SYNC_DIR/api_url"
@@ -810,7 +851,7 @@ def save_managed(s):
     tmp = managed_path + ".tmp"
     with open(tmp, "w") as f:
         for u in sorted(s):
-            f.write(u + "\\\\n")
+            f.write(u + "\\n")
     os.rename(tmp, managed_path)
 
 try:
@@ -842,7 +883,7 @@ for x in users_list:
         continue
     role = (x.get("role") or "user").strip().lower()
     current_users.add(u)
-    if role == "admin":
+    if role in ("root", "admin"):
         admin_users.add(u)
     if subprocess.run(["id", u], capture_output=True).returncode != 0:
         r = subprocess.run(["useradd", "-m", "-s", "/bin/bash", u], capture_output=True)
@@ -854,7 +895,7 @@ for x in users_list:
     os.makedirs(ssh_dir, mode=0o700, exist_ok=True)
     ak = os.path.join(ssh_dir, "authorized_keys")
     with open(ak, "w") as f:
-        f.write(key_line + "\\\\n")
+        f.write(key_line + "\\n")
     os.chmod(ak, 0o600)
     try:
         pw = pwd.getpwnam(u)
@@ -867,9 +908,9 @@ for x in users_list:
 sudoers_dir = "/etc/sudoers.d"
 sudoers_path = os.path.join(sudoers_dir, "sshcontrol-admin")
 if os.path.isdir(sudoers_dir):
-    lines = ["# SSHCONTROL managed - do not edit manually\\\\n"]
+    lines = ["# SSHCONTROL managed - do not edit manually\\n"]
     for au in sorted(admin_users):
-        lines.append(au + " ALL=(ALL) NOPASSWD: ALL\\\\n")
+        lines.append(au + " ALL=(ALL) NOPASSWD: ALL\\n")
     tmp_sudoers = sudoers_path + ".tmp"
     try:
         with open(tmp_sudoers, "w") as f:
@@ -885,6 +926,24 @@ if os.path.isdir(sudoers_dir):
         print(f"WARN: sudoers write failed: {{e}}", file=sys.stderr)
         if os.path.isfile(tmp_sudoers):
             os.remove(tmp_sudoers)
+    # Sudo: 2FA verification - allow all managed users to verify TOTP (helper reads creds as root)
+    sudoers_2fa = os.path.join(sudoers_dir, "sshcontrol-2fa")
+    lines_2fa = ["# SSHCONTROL 2FA verification - do not edit manually\\n"]
+    for u in sorted(current_users):
+        lines_2fa.append(u + " ALL=(root) NOPASSWD: /etc/sshcontrol/verify-2fa-helper *\\n")
+    tmp_2fa = sudoers_2fa + ".tmp"
+    try:
+        with open(tmp_2fa, "w") as f:
+            f.writelines(lines_2fa)
+        os.chmod(tmp_2fa, 0o440)
+        r2 = subprocess.run(["visudo", "-c", "-f", tmp_2fa], capture_output=True)
+        if r2.returncode == 0:
+            os.rename(tmp_2fa, sudoers_2fa)
+        else:
+            os.remove(tmp_2fa)
+    except (OSError, IOError):
+        if os.path.isfile(tmp_2fa):
+            os.remove(tmp_2fa)
 
 managed = load_managed()
 managed.update(current_users)
@@ -948,19 +1007,63 @@ except Exception:
 sys.exit(0)
 AKCEOF
   chmod 755 "$SYNC_DIR/authorized-keys-command.py"
+  # 2FA gate: when user has TOTP enabled, command= runs this before shell. Prompts for code, verifies via API, execs shell.
+  cat > "$SYNC_DIR/verify-2fa-helper" << '2FAHELPER'
+#!/usr/bin/env python3
+"""Verify TOTP for SSH 2FA. Run via sudo from 2fa-gate. Reads creds from /etc/sshcontrol, calls panel API."""
+import json, os, sys, urllib.request
+try:
+    code = (sys.argv[1] or "").strip().replace(" ", "")[:8]
+    user = os.environ.get("SUDO_USER", "")
+    if len(code) < 6 or not user:
+        sys.exit(1)
+    d = "/etc/sshcontrol"
+    with open(os.path.join(d, "api_url")) as f:
+        api_url = f.read().strip().rstrip("/")
+    with open(os.path.join(d, "token")) as f:
+        token = f.read().strip()
+    with open(os.path.join(d, "server_id")) as f:
+        server_id = f.read().strip()
+    body = json.dumps({{"token": token, "server_id": server_id, "linux_username": user, "totp_code": code}}).encode()
+    req = urllib.request.Request(api_url + "/api/servers/verify-ssh-2fa", data=body, method="POST", headers={{"Content-Type": "application/json"}})
+    with urllib.request.urlopen(req, timeout=15) as r:
+        if r.status == 200:
+            sys.exit(0)
+except Exception:
+    pass
+sys.exit(1)
+2FAHELPER
+  chmod 755 "$SYNC_DIR/verify-2fa-helper"
+  cat > "$SYNC_DIR/2fa-gate" << '2FAGATE'
+#!/bin/sh
+# SSH 2FA gate: prompt for TOTP, verify via helper, exec shell on success.
+[ -t 0 ] || {{ echo "2FA requires an interactive SSH session (scp/rsync not supported)."; exit 1; }}
+printf "Enter your 2FA code: "
+read -r code
+if sudo /etc/sshcontrol/verify-2fa-helper "$code" 2>/dev/null; then
+    exec ${{SHELL:-/bin/bash}} -l
+fi
+printf "Invalid 2FA code.\\n"
+exit 1
+2FAGATE
+  chmod 755 "$SYNC_DIR/2fa-gate"
   # sshd config: AuthorizedKeysCommand for centralized key lookup + fallback to per-user files
+  # Use 00- prefix so we're read first; PasswordAuthentication no must override 50-cloudinit.conf (which sets yes)
   if [ -d /etc/ssh/sshd_config.d ]; then
-    cat > /etc/ssh/sshd_config.d/99-sshcontrol.conf << 'SSHDCONF'
+    rm -f /etc/ssh/sshd_config.d/99-sshcontrol.conf 2>/dev/null || true
+    cat > /etc/ssh/sshd_config.d/00-sshcontrol.conf << 'SSHDCONF'
 # SSHCONTROL managed - do not edit manually
 AuthorizedKeysCommand /etc/sshcontrol/authorized-keys-command.py %u
 AuthorizedKeysCommandUser root
 PubkeyAuthentication yes
-PasswordAuthentication yes
+PasswordAuthentication no
 PermitRootLogin yes
 MaxAuthTries 6
+# Root can connect with password; other users require key (+ 2FA if enabled)
+Match User root
+    PasswordAuthentication yes
 SSHDCONF
-    chmod 644 /etc/ssh/sshd_config.d/99-sshcontrol.conf
-    sshd -t 2>/dev/null && (systemctl reload sshd 2>/dev/null || systemctl reload ssh 2>/dev/null || service sshd reload 2>/dev/null || service ssh reload 2>/dev/null || true)
+    chmod 644 /etc/ssh/sshd_config.d/00-sshcontrol.conf
   fi
   # Fallback: if sshd_config.d is not supported, patch the main sshd_config directly
   if [ ! -d /etc/ssh/sshd_config.d ] && [ -f /etc/ssh/sshd_config ]; then
@@ -970,13 +1073,17 @@ SSHDCONF
 AuthorizedKeysCommand /etc/sshcontrol/authorized-keys-command.py %u
 AuthorizedKeysCommandUser root
 PubkeyAuthentication yes
-PasswordAuthentication yes
+PasswordAuthentication no
 PermitRootLogin yes
 MaxAuthTries 6
+# Root can connect with password; other users require key (+ 2FA if enabled)
+Match User root
+    PasswordAuthentication yes
 # SSHCONTROL-END
 SSHDPATCH
-    sshd -t 2>/dev/null && (systemctl reload sshd 2>/dev/null || systemctl reload ssh 2>/dev/null || service sshd reload 2>/dev/null || service ssh reload 2>/dev/null || true)
   fi
+  # Note: Do not sed PasswordAuthentication here - it would overwrite our Match User root block
+  sshd -t 2>/dev/null && (systemctl reload sshd 2>/dev/null || systemctl reload ssh 2>/dev/null || service sshd reload 2>/dev/null || service ssh reload 2>/dev/null || true)
   cat > "$SYNC_DIR/sync-users.sh" << 'SYNCUSERS'
 #!/bin/sh
 SYNC_DIR="/etc/sshcontrol"
@@ -995,6 +1102,7 @@ TMP=$(mktemp)
 HTTP_CODE=$(curl -s -w '%{{http_code}}' "$API_URL/api/servers/users-keys?token=$TOKEN&server_id=$SERVER_ID" -o "$TMP" 2>/dev/null)
 if [ "$HTTP_CODE" = "200" ] && python3 -c "import json,sys; d=json.load(open(sys.argv[1])); assert 'users' in d" "$TMP" 2>/dev/null; then
   cp "$TMP" "$SYNC_DIR/users-keys.json"
+  chmod 644 "$SYNC_DIR/users-keys.json"
 else
   echo "$(date): sync-users download failed (HTTP $HTTP_CODE), keeping previous data" >> "$SYNC_DIR/sync-users.log"
 fi

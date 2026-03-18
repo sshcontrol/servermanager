@@ -14,6 +14,8 @@ type ServerItem = {
   description: string | null;
   status: string;
   created_at: string;
+  sync_requested_at?: string | null;
+  server_groups?: { id: string; name: string }[];
 };
 
 type ConnectionStatus = { status: "reachable" | "unreachable" | "unknown" | "checking"; checked_at?: string };
@@ -42,6 +44,7 @@ export default function ServerList() {
       ]);
       if (res?.success ?? res?.ok) {
         toast("success", "Sync completed successfully.");
+        fetchServers();
       } else {
         toast("error", res?.message || "Sync failed");
       }
@@ -105,6 +108,13 @@ export default function ServerList() {
     });
   };
 
+  const fetchServers = () => {
+    api
+      .get<ServerItem[]>("/api/servers")
+      .then((data) => setServers(Array.isArray(data) ? data : []))
+      .catch((e) => setError(e instanceof Error ? e.message : "Failed to load servers"));
+  };
+
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
@@ -122,6 +132,14 @@ export default function ServerList() {
       });
     return () => { cancelled = true; };
   }, []);
+
+  useEffect(() => {
+    if (servers.length === 0) return;
+    const hasSyncing = servers.some((s) => s.sync_requested_at);
+    if (!hasSyncing) return;
+    const iv = setInterval(fetchServers, 30000);
+    return () => clearInterval(iv);
+  }, [servers]);
 
   useEffect(() => {
     if (servers.length === 0) return;
@@ -144,7 +162,7 @@ export default function ServerList() {
   return (
     <div className="container app-page">
       <div className="page-header page-header-actions">
-        <h1>Servers</h1>
+        <h1>Modify servers</h1>
         <div style={{ display: "flex", gap: "0.75rem", alignItems: "center", flexWrap: "wrap" }}>
           {!loading && servers.length > 0 && (
             <input
@@ -186,6 +204,7 @@ export default function ServerList() {
                   <>
                     <th>IP</th>
                     <th>Description</th>
+                    <th>Groups</th>
                   </>
                 )}
                 <th>Connection</th>
@@ -214,25 +233,27 @@ export default function ServerList() {
                     <td>
                       <span style={{ display: "inline-flex", alignItems: "center", gap: "0.5rem" }}>
                         {isAdmin && (
-                          <button
-                            type="button"
-                            className="server-sync-icon-btn"
-                            onClick={() => handleSyncNow(s)}
-                            title={syncingId === s.id ? "Syncing…" : "Sync now (push users and keys to this server)"}
-                            disabled={syncingId === s.id}
-                            aria-label={syncingId === s.id ? "Syncing" : "Sync now"}
-                          >
-                            {syncingId === s.id ? (
-                              <span className="server-sync-spinner" aria-hidden />
-                            ) : (
+                          (syncingId === s.id || s.sync_requested_at) ? (
+                            <span style={{ display: "inline-flex", alignItems: "center", gap: "0.35rem", color: "var(--warning)", fontSize: "0.85rem" }}>
+                              <span className="server-sync-spinner server-sync-spinner-orange" aria-hidden style={{ width: 12, height: 12 }} />
+                              Syncing
+                            </span>
+                          ) : (
+                            <button
+                              type="button"
+                              className="server-sync-icon-btn"
+                              onClick={() => handleSyncNow(s)}
+                              title="Sync now (push users and keys to this server)"
+                              aria-label="Sync now"
+                            >
                               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
                                 <path d="M21 2v6h-6" />
                                 <path d="M3 12a9 9 0 0 1 15-6.7L21 8" />
                                 <path d="M3 22v-6h6" />
                                 <path d="M21 12a9 9 0 0 1-15 6.7L3 16" />
                               </svg>
-                            )}
-                          </button>
+                            </button>
+                          )
                         )}
                         <span>{displayName}</span>
                       </span>
@@ -241,10 +262,25 @@ export default function ServerList() {
                       <>
                         <td className="text-muted">{s.ip_address || "—"}</td>
                         <td className="text-muted" style={{ maxWidth: 200 }}>{s.description || "—"}</td>
+                        <td>
+                          {(s.server_groups?.length ?? 0) > 0 ? (
+                            <span style={{ display: "flex", flexWrap: "wrap", gap: "0.25rem" }}>
+                              {s.server_groups!.map((g) => (
+                                <Link key={g.id} to={`/server-groups/${g.id}`} className="badge badge-info" style={{ textDecoration: "none" }}>
+                                  {g.name}
+                                </Link>
+                              ))}
+                            </span>
+                          ) : (
+                            <span className="text-muted">—</span>
+                          )}
+                        </td>
                       </>
                     )}
                     <td>
-                      <span className={`badge ${connClass}`} title={connTitle}>{connLabel}</span>
+                      <span style={{ display: "inline-flex", alignItems: "center", gap: "0.5rem", flexWrap: "wrap" }}>
+                        <span className={`badge ${connClass}`} title={connTitle}>{connLabel}</span>
+                      </span>
                     </td>
                     {isAdmin && (
                       <td className="text-muted text-sm">

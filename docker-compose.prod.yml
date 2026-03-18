@@ -1,0 +1,4 @@
+# Production override: no dev volume mounts; use built images
+services:
+  backend:
+    volumes: []  # Remove ./backend:/app dev mount; use code baked into image

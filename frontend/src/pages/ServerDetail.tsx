@@ -15,13 +15,15 @@ type ServerItem = {
   description: string | null;
   status: string;
   created_at: string;
+  sync_requested_at?: string | null;
+  server_groups?: { id: string; name: string }[];
 };
 
 type AccessItem = { user_id: string; username: string; role: string };
 
 type UserGroupAccessItem = { user_group_id: string; name: string; role: string };
 
-type UserItem = { id: string; username: string; email: string };
+type UserItem = { id: string; username: string; email: string; is_superuser?: boolean; roles?: { id: string; name: string }[] };
 
 export default function ServerDetail() {
   const { id } = useParams<{ id: string }>();
@@ -33,13 +35,13 @@ export default function ServerDetail() {
   const [userGroups, setUserGroups] = useState<UserGroupAccessItem[]>([]);
   const [allUserGroups, setAllUserGroups] = useState<{ id: string; name: string }[]>([]);
   const [addUserGroupId, setAddUserGroupId] = useState("");
-  const [addUserGroupRole, setAddUserGroupRole] = useState<"admin" | "user">("user");
+  const [addUserGroupRole, setAddUserGroupRole] = useState<"root" | "user">("user");
   const [users, setUsers] = useState<UserItem[]>([]);
   const [friendlyName, setFriendlyName] = useState("");
   const [description, setDescription] = useState("");
   const [ipAddress, setIpAddress] = useState("");
   const [addUserId, setAddUserId] = useState("");
-  const [addRole, setAddRole] = useState<"admin" | "user">("user");
+  const [addRole, setAddRole] = useState<"root" | "user">("user");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -49,7 +51,7 @@ export default function ServerDetail() {
   const [copiedId, setCopiedId] = useState<"cmd" | "host" | "win" | null>(null);
   const [syncing, setSyncing] = useState(false);
   const [syncMessage, setSyncMessage] = useState<{ text: string; type: "success" | "error" } | null>(null);
-  const { toast } = useToast();
+  const { toast, showSuccessModal } = useToast();
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [confirmAction, setConfirmAction] = useState<{ msg: string; title: string; fn: () => Promise<void> } | null>(null);
   const [deleteServerModalOpen, setDeleteServerModalOpen] = useState(false);
@@ -58,6 +60,17 @@ export default function ServerDetail() {
     if (!id) return;
     api.get<AccessItem[]>(`/api/servers/${id}/access`).then(setAccess).catch(() => setAccess([]));
   };
+
+  const loadServer = () => {
+    if (!id) return;
+    api.get<ServerItem>(`/api/servers/${id}`).then((s) => setServer(s)).catch(() => {});
+  };
+
+  useEffect(() => {
+    if (!id || !server?.sync_requested_at) return;
+    const iv = setInterval(loadServer, 30000);
+    return () => clearInterval(iv);
+  }, [id, server?.sync_requested_at]);
 
   useEffect(() => {
     if (!id) return;
@@ -77,7 +90,7 @@ export default function ServerDetail() {
           // Load supplementary data in parallel; failures don't block the page
           api.get<AccessItem[]>(`/api/servers/${id}/access`).then(setAccess).catch(() => setAccess([]));
           api.get<UserGroupAccessItem[]>(`/api/servers/${id}/user-groups`).then((ugList) => setUserGroups(Array.isArray(ugList) ? ugList : [])).catch(() => setUserGroups([]));
-          api.get<{ users: UserItem[]; total: number }>("/api/users?limit=500").then((r) => setUsers(r.users || [])).catch(() => setUsers([]));
+          api.get<{ users: UserItem[]; total: number }>("/api/users?limit=500").then((r) => setUsers((r.users || []).filter((u) => !(u.is_superuser || (u.roles || []).some((role) => role.name === "admin"))))).catch(() => setUsers([]));
           api.get<{ id: string; name: string }[]>("/api/user-groups").then((r) => setAllUserGroups(Array.isArray(r) ? r : [])).catch(() => setAllUserGroups([]));
         })
         .catch((e) => {
@@ -136,6 +149,7 @@ export default function ServerDetail() {
         ip_address: ipAddress.trim() || null,
       });
       setServer(updated);
+      showSuccessModal();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to save");
     } finally {
@@ -189,12 +203,14 @@ export default function ServerDetail() {
         { user_id: addUserId, role: addRole }
       );
       loadAccess();
+      loadServer();
       setAddUserId("");
       const sync = res?.sync_results || [];
       const syncMsg = sync.length > 0 ? formatSyncResults(sync) : "Sync completed.";
       setAccessGrantedMessage(
         `${userName} is now granted access. ${syncMsg} They can log in, go to Servers, open this server, and use "Download my SSH key" plus the SSH command to connect. For PuTTY on Windows they should download the PPK key and load it under Connection → SSH → Auth → Private key.`
       );
+      showSuccessModal("Access granted successfully.");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to add access");
     } finally {
@@ -216,8 +232,9 @@ export default function ServerDetail() {
           );
           const sync = res?.sync_results || [];
           const msg = sync.length > 0 ? formatSyncResults(sync) : "Access revoked.";
-          toast("success", msg);
+          showSuccessModal(msg);
           loadAccess();
+          loadServer();
         } catch (e) {
           toast("error", e instanceof Error ? e.message : "Failed to revoke");
         } finally {
@@ -240,6 +257,7 @@ export default function ServerDetail() {
       ]);
       if (res?.success ?? res?.ok) {
         setSyncMessage({ text: "Sync completed successfully.", type: "success" });
+        loadServer();
       } else {
         setSyncMessage({ text: res?.message || "Sync failed", type: "error" });
       }
@@ -345,6 +363,22 @@ export default function ServerDetail() {
       </div>
 
       {error && <p className="error-msg">{error}</p>}
+      {server?.sync_requested_at && (
+        <div
+          className="badge badge-warning"
+          style={{
+            marginBottom: "1rem",
+            padding: "0.75rem 1rem",
+            fontSize: "0.95rem",
+            display: "inline-flex",
+            alignItems: "center",
+            gap: "0.5rem",
+          }}
+        >
+          <span className="server-sync-spinner" aria-hidden style={{ width: 16, height: 16 }} />
+          This server is synchronizing. Changes will apply within 5 minutes.
+        </div>
+      )}
       {syncMessage && (
         <p className={syncMessage.type === "error" ? "error-msg" : "success-msg"} style={{ marginBottom: "1rem" }}>
           {syncMessage.text}
@@ -408,6 +442,18 @@ export default function ServerDetail() {
       <>
       <div className="card" style={{ marginBottom: "1.5rem" }}>
         <h2 className="card-subtitle">Server details</h2>
+        {(server.server_groups?.length ?? 0) > 0 && (
+          <div className="form-group" style={{ marginBottom: "1rem" }}>
+            <label>Member of groups</label>
+            <p style={{ margin: "0.35rem 0 0", display: "flex", flexWrap: "wrap", gap: "0.25rem" }}>
+              {server.server_groups!.map((g) => (
+                <Link key={g.id} to={`/server-groups/${g.id}`} className="badge badge-info" style={{ textDecoration: "none" }}>
+                  {g.name}
+                </Link>
+              ))}
+            </p>
+          </div>
+        )}
         <form onSubmit={saveServer}>
           <div className="form-group">
             <label htmlFor="server-friendly-name">Friendly name</label>
@@ -465,7 +511,7 @@ export default function ServerDetail() {
           </p>
         )}
         <p style={{ color: "var(--text-muted)", fontSize: "0.9rem", marginBottom: "1rem" }}>
-          Users with access can see this server. Role: <strong>admin</strong> (can manage access), <strong>user</strong> (view/use).
+          Users with access can see this server. Role: <strong>root</strong> (Linux elevated/sudo), <strong>user</strong> (Linux regular).
         </p>
 
         <div className="table-wrap" style={{ marginBottom: "1.5rem" }}>
@@ -487,7 +533,7 @@ export default function ServerDetail() {
               ) : access.map((a) => (
                 <tr key={a.user_id} style={{ borderBottom: "1px solid var(--border)" }}>
                   <td style={{ padding: "0.75rem" }}>{a.username}</td>
-                  <td style={{ padding: "0.75rem" }}><span className="badge">{a.role}</span></td>
+                  <td style={{ padding: "0.75rem" }}><span className="badge">{a.role === "root" || a.role === "admin" ? "Root" : "User"}</span></td>
                   <td style={{ padding: "0.75rem", textAlign: "right" }}>
                     <button type="button" className="btn-link danger" onClick={() => removeAccess(a.user_id)} disabled={saving}>
                       Revoke
@@ -520,10 +566,10 @@ export default function ServerDetail() {
             <select
               id="add-role"
               value={addRole}
-              onChange={(e) => setAddRole(e.target.value as "admin" | "user")}
+              onChange={(e) => setAddRole(e.target.value as "root" | "user")}
             >
               <option value="user">user</option>
-              <option value="admin">admin</option>
+              <option value="root">root</option>
             </select>
           </div>
           <button type="submit" className="primary" disabled={saving || !addUserId}>
@@ -557,7 +603,7 @@ export default function ServerDetail() {
               {userGroups.map((ug) => (
                 <tr key={ug.user_group_id} style={{ borderBottom: "1px solid var(--border)" }}>
                   <td style={{ padding: "0.75rem" }}><Link to={`/user-groups/${ug.user_group_id}`}>{ug.name}</Link></td>
-                  <td style={{ padding: "0.75rem" }}><span className="badge">{ug.role}</span></td>
+                  <td style={{ padding: "0.75rem" }}><span className="badge">{ug.role === "root" || ug.role === "admin" ? "Root" : "User"}</span></td>
                   <td style={{ padding: "0.75rem", textAlign: "right" }}>
                     <button
                       type="button"
@@ -568,8 +614,9 @@ export default function ServerDetail() {
                             `/api/servers/${id}/user-groups/${ug.user_group_id}`
                           );
                           setUserGroups((prev) => prev.filter((g) => g.user_group_id !== ug.user_group_id));
+                          loadServer();
                           const sync = res?.sync_results || [];
-                          toast("success", sync.length > 0 ? formatSyncResults(sync) : "User group removed.");
+                          showSuccessModal(sync.length > 0 ? formatSyncResults(sync) : "User group removed.");
                         } catch (e) {
                           setError(e instanceof Error ? e.message : "Failed to remove");
                         }
@@ -598,8 +645,9 @@ export default function ServerDetail() {
                 const added = allUserGroups.find((g) => g.id === addUserGroupId);
                 setUserGroups((prev) => [...prev, { user_group_id: addUserGroupId, name: added?.name ?? "", role: addUserGroupRole }]);
                 setAddUserGroupId("");
+                loadServer();
                 const sync = res?.sync_results || [];
-                toast("success", sync.length > 0 ? formatSyncResults(sync) : "User group added.");
+                showSuccessModal(sync.length > 0 ? formatSyncResults(sync) : "User group added.");
               } catch (e) {
                 setError(e instanceof Error ? e.message : "Failed to add");
               } finally {
@@ -619,9 +667,9 @@ export default function ServerDetail() {
             </div>
             <div className="form-group" style={{ marginBottom: 0, minWidth: "120px" }}>
               <label>Role</label>
-              <select value={addUserGroupRole} onChange={(e) => setAddUserGroupRole(e.target.value as "admin" | "user")}>
+              <select value={addUserGroupRole} onChange={(e) => setAddUserGroupRole(e.target.value as "root" | "user")}>
                 <option value="user">user</option>
-                <option value="admin">admin</option>
+                <option value="root">root</option>
               </select>
             </div>
             <button type="submit" className="primary" disabled={saving || !addUserGroupId}>Add group</button>

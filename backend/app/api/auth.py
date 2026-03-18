@@ -23,6 +23,7 @@ from app.schemas.auth import (
     VerifyDestructiveActionRequest,
     RequestPhoneVerificationRequest,
     VerifyPhoneRequest,
+    RequestPhoneChangeRequest,
     SmsVerificationToggleRequest,
     RequestAccountClosureRequest,
 )
@@ -432,7 +433,7 @@ async def totp_disable(
     current_user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
-    await AuthService.disable_totp(db, current_user, data.password)
+    await AuthService.disable_totp(db, current_user, data.password or None)
     return {"message": "TOTP disabled"}
 
 
@@ -458,7 +459,7 @@ async def get_plan_limits(
 
     from app.services.tenant_service import TenantService
     limits = await TenantService.get_plan_limits(db, current_user.tenant_id)
-    current_users = await TenantService.count_tenant_users(db, current_user.tenant_id)
+    current_users = await TenantService.count_tenant_users(db, current_user.tenant_id, exclude_admin=True)
     current_servers = await TenantService.count_tenant_servers(db, current_user.tenant_id)
     pending_invitations = await TenantService.count_tenant_pending_invitations(db, current_user.tenant_id)
 
@@ -624,6 +625,49 @@ async def verify_phone(
     return {"message": "Phone verified. It can no longer be changed by you; contact your administrator if needed."}
 
 
+@router.post("/request-phone-change")
+async def request_phone_change(
+    data: RequestPhoneChangeRequest,
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Send verification code to new phone. Works even when phone is already verified. Password required when verified."""
+    from app.models.tenant import PhoneVerificationToken
+    from app.models.user import utcnow_naive
+    from datetime import timedelta
+    from sqlalchemy import delete
+    import secrets
+    from app.services import sms_service
+    from app.core.security import verify_password
+
+    if getattr(current_user, "phone_verified", False):
+        if not data.password:
+            raise HTTPException(
+                status_code=400,
+                detail="Password required to change a verified phone number.",
+            )
+        if not verify_password(data.password, current_user.hashed_password):
+            raise HTTPException(status_code=401, detail="Invalid password.")
+
+    code = "".join(secrets.choice("0123456789") for _ in range(4))
+    now = utcnow_naive()
+    expires_at = now + timedelta(minutes=10)
+    await db.execute(delete(PhoneVerificationToken).where(PhoneVerificationToken.user_id == str(current_user.id)))
+    await db.flush()
+    token = PhoneVerificationToken(
+        user_id=str(current_user.id),
+        phone=data.phone,
+        code=code,
+        expires_at=expires_at,
+    )
+    db.add(token)
+    await db.flush()
+    sent, _ = await sms_service.send_sms(db, data.phone, f"Your SSHCONTROL verification code is: {code}")
+    if not sent:
+        raise HTTPException(status_code=503, detail="Could not send SMS. Check SMS configuration.")
+    return {"message": "Verification code sent to your new phone."}
+
+
 @router.post("/sms-verification/toggle")
 async def toggle_sms_verification(
     data: SmsVerificationToggleRequest,
@@ -637,11 +681,13 @@ async def toggle_sms_verification(
             detail="Verify your phone number first (Profile → Security) before enabling SMS verification.",
         )
     if not data.enabled:
-        if not data.password:
-            raise HTTPException(status_code=400, detail="Password required to disable SMS verification.")
-        from app.core.security import verify_password
-        if not verify_password(data.password, current_user.hashed_password):
-            raise HTTPException(status_code=401, detail="Invalid password.")
+        is_google_user = bool(getattr(current_user, "google_id", None))
+        if not is_google_user:
+            if not data.password:
+                raise HTTPException(status_code=400, detail="Password required to disable SMS verification.")
+            from app.core.security import verify_password
+            if not verify_password(data.password, current_user.hashed_password):
+                raise HTTPException(status_code=401, detail="Invalid password.")
     current_user.sms_verification_enabled = data.enabled
     await db.flush()
     return {"message": f"SMS verification {'enabled' if data.enabled else 'disabled'}."}

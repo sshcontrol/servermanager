@@ -1,17 +1,19 @@
-"""SMS sending via SMPP gateway (native SMPP protocol using smpplib)."""
+"""SMS sending via SMPP gateway (native SMPP protocol using smpplib).
+
+Uses a persistent connection with keep-alive (enquire_link every 30 seconds)
+to prevent idle timeout. Reconnects automatically when the connection drops.
+"""
 
 import asyncio
 import logging
 from typing import Optional, Tuple
 from urllib.parse import urlparse
 
-import smpplib.client
-import smpplib.consts
-import smpplib.gsm
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
 from app.models.smpp_settings import SmppSettings
+from app.services.smpp_connection import SMPPConnectionManager
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +24,6 @@ def _parse_host_port(link: str) -> Tuple[str, int]:
     if not link:
         return "", 2775
     if "://" in link:
-        scheme = "http" if not link.startswith("http") else ""
         parsed = urlparse(link if link.startswith("http") else "http://" + link)
         host = parsed.hostname or link.split("://", 1)[-1].split(":")[0].split("/")[0]
         port = parsed.port or 2775
@@ -43,54 +44,18 @@ def _send_sms_sync(
     sender: str,
 ) -> Tuple[bool, str]:
     """
-    Send SMS via native SMPP protocol. Runs synchronously (call from thread).
+    Send SMS via persistent SMPP connection. Uses connection manager with keep-alive.
     """
     if not host or not system_id or not password:
         return False, "SMPP host and credentials required"
 
+    mgr = SMPPConnectionManager()
+    client = mgr.ensure_connected(host, port, system_id, password, sender)
+    if not client:
+        return False, "SMPP connection failed"
+
     try:
-        client = smpplib.client.Client(
-            host,
-            port,
-            timeout=15,
-            allow_unknown_opt_params=True,
-        )
-        client.connect()
-        client.bind_transceiver(system_id=system_id, password=password)
-
-        # Normalize phone: strip + for SMPP, use digits only
-        dest_addr = to_phone.lstrip("+").replace(" ", "").replace("-", "")
-
-        # Handle Unicode and long messages via make_parts
-        parts, encoding_flag, msg_type_flag = smpplib.gsm.make_parts(message)
-
-        for part in parts:
-            if isinstance(part, str):
-                part = part.encode("utf-8")
-            client.send_message(
-                source_addr_ton=smpplib.consts.SMPP_TON_ALNUM,
-                source_addr_npi=smpplib.consts.SMPP_NPI_UNK,
-                source_addr=sender,
-                dest_addr_ton=smpplib.consts.SMPP_TON_INTL,
-                dest_addr_npi=smpplib.consts.SMPP_NPI_ISDN,
-                destination_addr=dest_addr,
-                short_message=part,
-                data_coding=encoding_flag,
-                esm_class=msg_type_flag,
-                registered_delivery=1,
-            )
-            resp = client.read_pdu()
-            if resp.command != "submit_sm_resp" or resp.is_error():
-                err = getattr(resp, "status", None)
-                desc = smpplib.consts.DESCRIPTIONS.get(err, "Unknown") if err else "Send failed"
-                client.unbind()
-                client.disconnect()
-                return False, f"SMPP error ({err}): {desc}"
-
-        client.unbind()
-        client.disconnect()
-        logger.info("SMS sent to %s***", to_phone[:6])
-        return True, ""
+        return mgr.send_message(client, to_phone, message, sender)
     except Exception as e:
         logger.warning("SMPP send failed: %s", e)
         return False, str(e)

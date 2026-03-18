@@ -68,6 +68,12 @@ async def lifespan(app: FastAPI):
         logger.exception("Failed to run migrations: %s", e)
         logger.warning("App will start despite migration failure. Ensure DB schema is up to date.")
     yield
+    # Shutdown: close persistent SMPP connection
+    try:
+        from app.services.smpp_connection import SMPPConnectionManager
+        SMPPConnectionManager().shutdown()
+    except Exception as e:
+        logger.debug("SMPP shutdown: %s", e)
 
 
 async def http_exception_handler(request: Request, exc: HTTPException):

@@ -5,7 +5,7 @@ from app.models.utils import generate_uuid, utcnow_naive
 
 
 class UserSSHKey(Base):
-    """SSH key pair for a user. Used to connect to assigned servers with assigned role (admin/user on server)."""
+    """SSH key pair for a user. Used to connect to assigned servers with assigned role (root/user on server)."""
 
     __tablename__ = "user_ssh_keys"
 

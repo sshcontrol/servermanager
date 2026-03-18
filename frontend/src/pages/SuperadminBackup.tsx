@@ -1,12 +1,8 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import { useAuth } from "../contexts/AuthContext";
-import { postAndDownload } from "../api/client";
-
-const API_BASE = import.meta.env.VITE_API_URL || "";
+import { postAndDownload, postForm } from "../api/client";
 
 export default function SuperadminBackup() {
-  const { refreshUser } = useAuth();
   const [backupPassword, setBackupPassword] = useState("");
   const [backupExporting, setBackupExporting] = useState(false);
   const [restoreFile, setRestoreFile] = useState<File | null>(null);
@@ -14,6 +10,7 @@ export default function SuperadminBackup() {
   const [restoreConfirm, setRestoreConfirm] = useState("");
   const [restoring, setRestoring] = useState(false);
   const [message, setMessage] = useState<{ type: "error" | "success"; text: string } | null>(null);
+  const [restoreMessage, setRestoreMessage] = useState<{ type: "error" | "success"; text: string } | null>(null);
 
   return (
     <div className="container app-page">
@@ -65,6 +62,7 @@ export default function SuperadminBackup() {
         <h2 className="card-subtitle">Restore from backup</h2>
         <p style={{ fontSize: "0.9rem", color: "var(--text-muted)", marginBottom: "0.75rem" }}>
           Upload an encrypted backup file and enter the password used when creating it. Type <strong>restore</strong> to confirm.
+          Large backups may take a few minutes—please wait and do not close the page.
         </p>
         <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem", maxWidth: "400px" }}>
           <input
@@ -92,30 +90,24 @@ export default function SuperadminBackup() {
             disabled={restoring || !restoreFile || restorePassword.length < 8 || restoreConfirm !== "restore"}
             onClick={async () => {
               if (!restoreFile || restoreConfirm !== "restore") return;
-              setMessage(null);
+              setRestoreMessage(null);
               setRestoring(true);
               try {
-                const token = localStorage.getItem("access_token");
                 const form = new FormData();
-                form.append("file", restoreFile);
+                form.append("file", restoreFile, restoreFile.name);
                 form.append("password", restorePassword);
                 form.append("confirm", restoreConfirm);
-                const res = await fetch(`${API_BASE}/api/admin/backup/import`, {
-                  method: "POST",
-                  headers: token ? { Authorization: `Bearer ${token}` } : {},
-                  body: form,
-                });
-                const data = await res.json().catch(() => ({}));
-                if (!res.ok) {
-                  throw new Error(typeof data.detail === "string" ? data.detail : "Restore failed");
-                }
-                setMessage({ type: "success", text: "Database restored. You may need to log in again." });
+                await postForm("/api/admin/backup/import", form, { timeoutMs: 600_000 });
+                setRestoreMessage({ type: "success", text: "Database restored. Refreshing page…" });
                 setRestoreFile(null);
                 setRestorePassword("");
                 setRestoreConfirm("");
-                await refreshUser();
+                window.location.reload();
               } catch (e) {
-                setMessage({ type: "error", text: e instanceof Error ? e.message : "Restore failed" });
+                setRestoreMessage({
+                  type: "error",
+                  text: e instanceof Error ? e.message : "Restore failed",
+                });
               } finally {
                 setRestoring(false);
               }
@@ -123,6 +115,11 @@ export default function SuperadminBackup() {
           >
             {restoring ? "Restoring…" : "Restore from backup"}
           </button>
+          {restoreMessage && (
+            <p className={restoreMessage.type === "error" ? "error-msg" : "success-msg"} style={{ marginTop: "0.75rem", marginBottom: 0 }}>
+              {restoreMessage.text}
+            </p>
+          )}
         </div>
       </div>
 

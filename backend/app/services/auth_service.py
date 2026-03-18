@@ -153,12 +153,19 @@ class AuthService:
         await db.flush()
 
     @staticmethod
-    async def disable_totp(db: AsyncSession, user: User, password: str) -> None:
-        if not verify_password(password, user.hashed_password):
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid password",
-            )
+    async def disable_totp(db: AsyncSession, user: User, password: str | None) -> None:
+        is_google_user = bool(getattr(user, "google_id", None))
+        if not is_google_user:
+            if not password or not password.strip():
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Password is required to disable 2FA.",
+                )
+            if not verify_password(password, user.hashed_password):
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Invalid password",
+                )
         user.totp_secret = None
         user.totp_enabled = False
         await db.flush()

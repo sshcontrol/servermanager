@@ -138,12 +138,12 @@ export default function Welcome() {
     try {
       await api.post("/api/auth/set-initial-password", { username: uname, new_password: password });
       await refreshUser();
-      setStep(0);
+      setStep(phoneStepIndex);
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Failed to set password";
       if (msg.toLowerCase().includes("already set")) {
         await refreshUser();
-        setStep(0);
+        setStep(phoneStepIndex);
       } else {
         setPasswordError(msg);
       }
@@ -173,7 +173,7 @@ export default function Welcome() {
     try {
       await api.post("/api/auth/totp/verify", { code: totpCode });
       await refreshUser();
-      setStep(phoneStepIndex);
+      setStep(needsPassword ? passwordStep : phoneStepIndex);
     } catch (err) {
       setTotpError(err instanceof Error ? err.message : "Invalid code");
     } finally {
@@ -253,14 +253,14 @@ export default function Welcome() {
 
   const stepLabels = needsCompanyStep
     ? ["Company Name", ...(needsPassword
-        ? (isAdmin ? ["Set Username", "Set Password", "Two-Factor Auth", "Phone Number", "Your Plan", "Getting Started"] : ["Set Username", "Set Password", "Two-Factor Auth", "Phone Number", "Getting Started"])
+        ? (isAdmin ? ["Set Username", "Two-Factor Auth", "Set Password", "Phone Number", "Your Plan", "Getting Started"] : ["Set Username", "Two-Factor Auth", "Set Password", "Phone Number", "Getting Started"])
         : needsUsername
           ? (isAdmin ? ["Set Username", "Two-Factor Auth", "Phone Number", "Your Plan", "Getting Started"] : ["Set Username", "Two-Factor Auth", "Phone Number", "Getting Started"])
           : (isAdmin ? ["Two-Factor Auth", "Phone Number", "Your Plan", "Getting Started"] : ["Two-Factor Auth", "Phone Number", "Getting Started"]))]
     : needsPassword
     ? (isAdmin
-        ? ["Set Username", "Set Password", "Two-Factor Auth", "Phone Number", "Your Plan", "Getting Started"]
-        : ["Set Username", "Set Password", "Two-Factor Auth", "Phone Number", "Getting Started"])
+        ? ["Set Username", "Two-Factor Auth", "Set Password", "Phone Number", "Your Plan", "Getting Started"]
+        : ["Set Username", "Two-Factor Auth", "Set Password", "Phone Number", "Getting Started"])
     : needsUsername
       ? (isAdmin
           ? ["Set Username", "Two-Factor Auth", "Phone Number", "Your Plan", "Getting Started"]
@@ -272,8 +272,8 @@ export default function Welcome() {
   const off = needsCompanyStep ? 1 : 0;
   const companyStep = 0;
   const usernameStep = off;
-  const passwordStep = needsPassword ? off + 1 : -1;
-  const totpStep = needsPassword ? off + 2 : needsUsername ? off + 1 : off;
+  const totpStep = needsPassword ? off + 1 : needsUsername ? off + 1 : off;
+  const passwordStep = needsPassword ? off + 2 : -1;
   const phoneStepIndex = needsPassword ? off + 3 : needsUsername ? off + 2 : off + 1;
   const planStep = isAdmin ? (needsPassword ? off + 4 : needsUsername ? off + 3 : off + 2) : -1;
   const guideStep = isAdmin ? (needsPassword ? off + 5 : needsUsername ? off + 4 : off + 3) : (needsPassword ? off + 4 : needsUsername ? off + 3 : off + 2);
@@ -417,7 +417,7 @@ export default function Welcome() {
                     try {
                       const res = await api.get<{ available: boolean }>(`/api/auth/check-username?username=${encodeURIComponent(uname)}`);
                       if (res.available) {
-                        setStep(passwordStep);
+                        setStep(totpStep);
                       } else {
                         setUsernameError("This username is already taken. Please choose another.");
                       }
@@ -477,8 +477,8 @@ export default function Welcome() {
               <button onClick={saveInitialPassword} disabled={passwordLoading || username.trim().length < 2 || password.length < 8 || password !== confirmPassword} style={{ ...btnPrimary, width: "100%" }}>
                 {passwordLoading ? "Setting..." : "Set Password & Continue"}
               </button>
-              <button onClick={() => { setStep(usernameStep); setPasswordError(""); setPassword(""); setConfirmPassword(""); }} style={{ ...btnSecondary, width: "100%" }}>
-                Back to change username
+              <button onClick={() => { setStep(totpStep); setPasswordError(""); setPassword(""); setConfirmPassword(""); }} style={{ ...btnSecondary, width: "100%" }}>
+                Back to 2FA step
               </button>
             </div>
           </div>
@@ -498,7 +498,7 @@ export default function Welcome() {
               <button onClick={setupTotp} disabled={totpLoading} style={btnPrimary}>
                 {totpLoading ? "Setting up..." : "Enable 2FA"}
               </button>
-              <button onClick={() => setStep(phoneStepIndex)} style={btnSecondary}>
+              <button onClick={() => setStep(needsPassword ? passwordStep : phoneStepIndex)} style={btnSecondary}>
                 Skip for now
               </button>
             </div>

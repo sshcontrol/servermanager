@@ -1,9 +1,11 @@
 import { useState } from "react";
+import { useToast } from "../components/Toast";
 import { api } from "../api/client";
 import { validatePassword } from "../utils/password";
 import PasswordField from "../components/PasswordField";
 
 export default function ProfilePassword() {
+  const { showSuccessModal } = useToast();
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
@@ -25,7 +27,7 @@ export default function ProfilePassword() {
     setSaving(true);
     try {
       await api.post("/api/auth/change-password", { current_password: currentPassword, new_password: newPassword });
-      setMessage({ type: "success", text: "Password changed." });
+      showSuccessModal("Password changed.");
       setCurrentPassword("");
       setNewPassword("");
       setConfirmPassword("");
@@ -59,7 +61,7 @@ export default function ProfilePassword() {
           </div>
           <button type="submit" className="primary" disabled={saving}>{saving ? "Changing…" : "Change password"}</button>
         </form>
-        {message && <p className={message.type === "error" ? "error-msg" : "success-msg"} style={{ marginTop: "0.75rem" }}>{message.text}</p>}
+        {message && <p className="error-msg" style={{ marginTop: "0.75rem" }}>{message.text}</p>}
       </div>
     </div>
   );

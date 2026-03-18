@@ -47,7 +47,7 @@ class ServerGroupAccess(Base):
 
     server_group_id = Column(String(36), ForeignKey("server_groups.id", ondelete="CASCADE"), primary_key=True)
     user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
-    role = Column(String(20), nullable=False)  # admin | user
+    role = Column(String(20), nullable=False)  # root | user (Linux user type on server)
     created_at = Column(DateTime, default=utcnow_naive, nullable=False)
 
     server_group = relationship("ServerGroup", back_populates="access")

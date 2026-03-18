@@ -71,11 +71,16 @@ async def create_checkout_session(
     success = success_url or f"{frontend_url}/#/payment-result?payment_success=true&session_id={{CHECKOUT_SESSION_ID}}"
     cancel = cancel_url or f"{frontend_url}/#/payment-result?canceled=true"
 
+    # When switching from test to live keys: tenant.stripe_customer_id and plan.stripe_price_id
+    # from test mode are invalid. Use customer_email / price_data instead if API rejects them.
+    use_customer_id = tenant.stripe_customer_id
+    use_price_id = plan.stripe_price_id
+
     if auto_renew:
         # Subscription mode: Stripe charges automatically at each billing cycle
         line_items = []
-        if plan.stripe_price_id:
-            line_items.append({"price": plan.stripe_price_id, "quantity": 1})
+        if use_price_id:
+            line_items.append({"price": use_price_id, "quantity": 1})
         else:
             amount_cents = int(float(plan.price) * 100)
             interval = "year" if plan.duration_days >= 365 else "month"
@@ -100,13 +105,13 @@ async def create_checkout_session(
             "metadata": metadata,
             "subscription_data": {"metadata": metadata},
         }
-        if tenant.stripe_customer_id:
-            session_params["customer"] = tenant.stripe_customer_id
+        if use_customer_id:
+            session_params["customer"] = use_customer_id
             session_params.pop("customer_email", None)
     else:
         line_items = []
-        if plan.stripe_price_id:
-            line_items.append({"price": plan.stripe_price_id, "quantity": 1})
+        if use_price_id:
+            line_items.append({"price": use_price_id, "quantity": 1})
         else:
             amount_cents = int(float(plan.price) * 100)
             line_items.append({
@@ -128,11 +133,53 @@ async def create_checkout_session(
             "customer_email": admin_email,
             "metadata": metadata,
         }
-        if tenant.stripe_customer_id:
-            session_params["customer"] = tenant.stripe_customer_id
+        if use_customer_id:
+            session_params["customer"] = use_customer_id
             session_params.pop("customer_email", None)
 
-    session = stripe.checkout.Session.create(**session_params)
+    try:
+        session = stripe.checkout.Session.create(**session_params)
+    except stripe.error.InvalidRequestError as e:
+        err_msg = str(e).lower()
+        # When switching test↔live: customer_id and price_id from the other mode are invalid.
+        # Retry with customer_email and price_data instead.
+        if ("customer" in err_msg or "price" in err_msg or "no such" in err_msg) and (use_customer_id or use_price_id):
+            logger.warning(
+                "Stripe rejected request (likely test/live mode mismatch). Retrying with customer_email and price_data: %s",
+                e,
+            )
+            session_params.pop("customer", None)
+            session_params["customer_email"] = admin_email
+            amount_cents = int(float(plan.price) * 100)
+            if auto_renew:
+                interval = "year" if plan.duration_days >= 365 else "month"
+                session_params["line_items"] = [{
+                    "price_data": {
+                        "currency": (plan.currency or "usd").lower(),
+                        "unit_amount": amount_cents,
+                        "product_data": {
+                            "name": plan.name,
+                            "description": plan.description or f"{plan.duration_label} - {plan.max_users} users, {plan.max_servers} servers",
+                        },
+                        "recurring": {"interval": interval},
+                    },
+                    "quantity": 1,
+                }]
+            else:
+                session_params["line_items"] = [{
+                    "price_data": {
+                        "currency": (plan.currency or "usd").lower(),
+                        "unit_amount": amount_cents,
+                        "product_data": {
+                            "name": plan.name,
+                            "description": plan.description or f"{plan.duration_label} - {plan.max_users} users, {plan.max_servers} servers",
+                        },
+                    },
+                    "quantity": 1,
+                }]
+            session = stripe.checkout.Session.create(**session_params)
+        else:
+            raise
     return {"url": session.url, "session_id": session.id}
 
 
@@ -599,11 +646,14 @@ async def refund_transaction(db: AsyncSession, transaction_id: str) -> dict:
     try:
         if payment_intent_id:
             pi = stripe.PaymentIntent.retrieve(payment_intent_id)
-            if pi.charges and pi.charges.data:
-                charge_id = pi.charges.data[0].id
+            charges = getattr(pi, "charges", None)
+            if charges and getattr(charges, "data", None) and len(charges.data) > 0:
+                first_charge = charges.data[0]
+                charge_id = getattr(first_charge, "id", None) or str(first_charge)
         if not charge_id and invoice_id:
             inv = stripe.Invoice.retrieve(invoice_id)
-            charge_id = inv.get("charge") if isinstance(inv.get("charge"), str) else (inv.charge.id if inv.charge else None)
+            ch = getattr(inv, "charge", None)
+            charge_id = ch if isinstance(ch, str) else (getattr(ch, "id", None) if ch else None)
         if not charge_id:
             return {"success": False, "message": "No Stripe charge found for this transaction"}
 

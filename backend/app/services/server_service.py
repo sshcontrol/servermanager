@@ -90,14 +90,14 @@ async def register_server(db: AsyncSession, hostname: str, ip_address: str | Non
 
 
 async def _get_users_with_access_to_server(db: AsyncSession, server_id: str) -> list[tuple[str, str]]:
-    """Returns list of (user_id, effective_role) for all users with access to this server (direct + server groups + user groups). Role is 'admin' if any source grants admin else 'user'."""
+    """Returns list of (user_id, effective_role) for all users with access to this server (direct + server groups + user groups). Role is 'root' if any source grants root else 'user'."""
     # Direct access
     r = await db.execute(
         select(ServerAccess.user_id, ServerAccess.role).where(ServerAccess.server_id == server_id)
     )
     by_user: dict[str, str] = {}
     for uid, role in r.all():
-        by_user[uid] = role if role == "admin" else by_user.get(uid, "user")
+        by_user[uid] = role if role == "root" else by_user.get(uid, "user")
 
     # Via server groups: server is in group, user has access to group
     r2 = await db.execute(
@@ -106,7 +106,7 @@ async def _get_users_with_access_to_server(db: AsyncSession, server_id: str) -> 
         .where(server_group_servers.c.server_id == server_id)
     )
     for uid, role in r2.all():
-        if uid not in by_user or role == "admin":
+        if uid not in by_user or role == "root":
             by_user[uid] = role
 
     # Via user groups: user is in a group that has access to this server
@@ -116,15 +116,56 @@ async def _get_users_with_access_to_server(db: AsyncSession, server_id: str) -> 
         .where(ServerUserGroupAccess.server_id == server_id)
     )
     for uid, role in r3.all():
-        if uid not in by_user or role == "admin":
+        if uid not in by_user or role == "root":
             by_user[uid] = role
 
     return list(by_user.items())
 
 
+async def get_user_effective_server_access(
+    db: AsyncSession, user_id: str, tenant_id: str | None = None
+) -> list[dict]:
+    """Returns list of {server_id, role} for all servers the user has access to (direct + server groups + user groups). Role is root if any source grants root, else user."""
+    by_server: dict[str, str] = {}
+    # Direct access
+    q1 = select(ServerAccess.server_id, ServerAccess.role).where(ServerAccess.user_id == user_id)
+    r1 = await db.execute(q1)
+    for sid, role in r1.all():
+        by_server[sid] = role
+    # Via server groups
+    q2 = (
+        select(server_group_servers.c.server_id, ServerGroupAccess.role)
+        .join(ServerGroupAccess, ServerGroupAccess.server_group_id == server_group_servers.c.server_group_id)
+        .where(ServerGroupAccess.user_id == user_id)
+    )
+    r2 = await db.execute(q2)
+    for sid, role in r2.all():
+        if sid not in by_server or role == "root":
+            by_server[sid] = role
+    # Via user groups
+    q3 = (
+        select(ServerUserGroupAccess.server_id, ServerUserGroupAccess.role)
+        .join(user_group_members, user_group_members.c.user_group_id == ServerUserGroupAccess.user_group_id)
+        .where(user_group_members.c.user_id == user_id)
+    )
+    r3 = await db.execute(q3)
+    for sid, role in r3.all():
+        if sid not in by_server or role == "root":
+            by_server[sid] = role
+    # Filter by tenant if specified (only include servers in tenant)
+    if tenant_id is not None:
+        server_ids = list(by_server.keys())
+        if server_ids:
+            q4 = select(Server.id).where(Server.id.in_(server_ids), Server.tenant_id == tenant_id)
+            r4 = await db.execute(q4)
+            allowed = {row[0] for row in r4.all()}
+            by_server = {k: v for k, v in by_server.items() if k in allowed}
+    return [{"server_id": sid, "role": r} for sid, r in by_server.items()]
+
+
 async def list_servers(db: AsyncSession, user_id: str, is_superuser: bool, tenant_id: str | None = None) -> list[Server]:
     if is_superuser:
-        q = select(Server)
+        q = select(Server).options(selectinload(Server.server_groups))
         if tenant_id:
             q = q.where(Server.tenant_id == tenant_id)
         r = await db.execute(q.order_by(Server.hostname))
@@ -147,7 +188,12 @@ async def list_servers(db: AsyncSession, user_id: str, is_superuser: bool, tenan
     server_ids.update(row[0] for row in r3.all())
     if not server_ids:
         return []
-    r = await db.execute(select(Server).where(Server.id.in_(server_ids)).order_by(Server.hostname))
+    r = await db.execute(
+        select(Server)
+        .options(selectinload(Server.server_groups))
+        .where(Server.id.in_(server_ids))
+        .order_by(Server.hostname)
+    )
     return list(r.scalars().all())
 
 
@@ -238,7 +284,9 @@ async def get_my_groups_and_servers(db: AsyncSession, user_id: str, is_superuser
 
 
 async def get_server(db: AsyncSession, server_id: str) -> Server | None:
-    r = await db.execute(select(Server).where(Server.id == server_id))
+    r = await db.execute(
+        select(Server).options(selectinload(Server.server_groups)).where(Server.id == server_id)
+    )
     return r.scalar_one_or_none()
 
 
@@ -274,7 +322,7 @@ async def set_server_access(db: AsyncSession, server_id: str, user_id: str, role
 
 
 async def set_user_server_accesses(db: AsyncSession, user_id: str, accesses: list[dict]) -> None:
-    """accesses = [{"server_id": "...", "role": "admin"|"user"}, ...]"""
+    """accesses = [{"server_id": "...", "role": "root"|"user"}, ...]"""
     await db.execute(delete(ServerAccess).where(ServerAccess.user_id == user_id))
     for a in accesses:
         db.add(ServerAccess(user_id=user_id, server_id=a["server_id"], role=a["role"]))
@@ -382,7 +430,7 @@ async def get_users_keys_for_server(db: AsyncSession, server_id: str) -> list[di
     tenant_id = server.tenant_id if server else None
     user_roles_list = await _get_users_with_access_to_server(db, server_id)
     existing_ids = {uid for uid, _ in user_roles_list}
-    # Include tenant admins (is_superuser OR admin role) with admin/sudo on all servers in their tenant
+    # Include tenant admins (is_superuser OR admin role) with root/sudo on all servers in their tenant
     if tenant_id:
         admin_role_ids = select(Role.id).where(Role.name == "admin")
         r_admin = await db.execute(
@@ -397,7 +445,7 @@ async def get_users_keys_for_server(db: AsyncSession, server_id: str) -> list[di
         )
         for (uid,) in r_admin.all():
             if uid not in existing_ids:
-                user_roles_list.append((uid, "admin"))
+                user_roles_list.append((uid, "root"))
                 existing_ids.add(uid)
     if not user_roles_list:
         return []
@@ -412,24 +460,87 @@ async def get_users_keys_for_server(db: AsyncSession, server_id: str) -> list[di
         .order_by(User.id, UserSSHKey.created_at.desc().nulls_last())
     )
     seen_user: set[str] = set()
-    opts = "no-port-forwarding,no-X11-forwarding,no-agent-forwarding "
+    # Options must be comma-separated with NO spaces; space before key type causes sshd to reject
+    opts = "no-port-forwarding,no-X11-forwarding,no-agent-forwarding"
     result: list[dict] = []
     for user, ssh_key in r.all():
         if not ssh_key or not ssh_key.public_key or user.id in seen_user:
             continue
         seen_user.add(user.id)
         pk = ssh_key.public_key.strip()
-        line = opts + pk
+        # Per-user 2FA: only add 2fa-gate for users who have TOTP enabled. Users with 2FA disabled connect directly.
+        totp_on = bool(getattr(user, "totp_enabled", False))
+        line = opts + " " + pk
+        if totp_on:
+            line = 'command="/etc/sshcontrol/2fa-gate",' + opts + " " + pk
         safe_name = re.sub(r"[^a-z0-9_]", "_", (user.username or "user").lower()).strip("_") or "user"
         allowed_ips = allowed_per_user.get(user.id, [])
         role = role_by_user.get(user.id, "user")
-        result.append({"username": safe_name, "authorized_key_line": line, "allowed_ips": allowed_ips, "role": role})
+        # Output "admin" for root users so old sync scripts (checking role == "admin") work without redeploy
+        role_for_sync = "admin" if role == "root" else role
+        result.append({
+            "username": safe_name,
+            "authorized_key_line": line,
+            "allowed_ips": allowed_ips,
+            "role": role_for_sync,
+            "totp_required": totp_on,
+        })
     return result
 
 
 def _linux_username(panel_username: str) -> str:
     """Same sanitization as in get_users_keys_for_server: panel username -> Linux username on server."""
     return re.sub(r"[^a-z0-9_]", "_", (panel_username or "user").lower()).strip("_") or "user"
+
+
+async def get_user_by_linux_username(db: AsyncSession, linux_username: str) -> User | None:
+    """Find User whose panel username maps to the given Linux username. Used for SSH 2FA verification."""
+    target = (linux_username or "").strip().lower()
+    if not target:
+        return None
+    r = await db.execute(select(User).where(User.is_active == True))  # noqa: E712
+    for user in r.scalars().all():
+        if _linux_username(user.username or "") == target:
+            return user
+    return None
+
+
+async def get_user_by_linux_username_for_server(
+    db: AsyncSession, server_id: str, linux_username: str
+) -> User | None:
+    """Find User whose panel username maps to linux_username AND who has access to this server.
+    Used for SSH 2FA verification - must verify TOTP of the connecting user, not admins or other users."""
+    target = (linux_username or "").strip().lower()
+    if not target:
+        return None
+    user_roles_list = await _get_users_with_access_to_server(db, server_id)
+    existing_ids = {uid for uid, _ in user_roles_list}
+    server = await get_server(db, server_id)
+    tenant_id = server.tenant_id if server else None
+    # Include tenant admins (same as get_users_keys_for_server)
+    if tenant_id:
+        admin_role_ids = select(Role.id).where(Role.name == "admin")
+        r_admin = await db.execute(
+            select(User.id).where(
+                User.tenant_id == tenant_id,
+                User.is_active == True,  # noqa: E712
+                (
+                    (User.is_superuser == True)  # noqa: E712
+                    | (User.id.in_(select(user_roles.c.user_id).where(user_roles.c.role_id.in_(admin_role_ids))))
+                ),
+            )
+        )
+        for (uid,) in r_admin.all():
+            existing_ids.add(uid)
+    if not existing_ids:
+        return None
+    r = await db.execute(
+        select(User).where(User.id.in_(existing_ids)).where(User.is_active == True)  # noqa: E712
+    )
+    for user in r.scalars().all():
+        if _linux_username(user.username or "") == target:
+            return user
+    return None
 
 
 async def save_session_report(db: AsyncSession, server_id: str, usernames: list[str]) -> None:

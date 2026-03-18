@@ -116,6 +116,53 @@ export async function downloadFile(path: string, suggestedName: string, allowEmp
   URL.revokeObjectURL(url);
 }
 
+/** POST FormData (e.g. file upload). Uses auth token. Throws on error. */
+export async function postForm<T = Record<string, unknown>>(
+  path: string,
+  form: FormData,
+  options?: { signal?: AbortSignal; timeoutMs?: number }
+): Promise<T> {
+  const token = localStorage.getItem("access_token");
+  const headers: Record<string, string> = {};
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+  const controller = options?.timeoutMs ? new AbortController() : undefined;
+  const timeoutId = controller
+    ? setTimeout(() => controller.abort(), options!.timeoutMs)
+    : undefined;
+  const signal = options?.signal ?? controller?.signal;
+  const url = `${API_BASE}${path}`;
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method: "POST",
+      headers,
+      body: form,
+      signal,
+      credentials: "same-origin",
+    });
+  } catch (e) {
+    if (timeoutId) clearTimeout(timeoutId);
+    const isAbort = e instanceof Error && e.name === "AbortError";
+    if (isAbort) throw new Error("Request timed out. Please try again.");
+    const isNetwork =
+      e instanceof TypeError &&
+      (e.message === "Failed to fetch" || e.message === "Load failed" || e.message.includes("NetworkError"));
+    if (isNetwork) throw new Error(SERVER_UNREACHABLE_MSG);
+    throw e;
+  }
+  if (timeoutId) clearTimeout(timeoutId);
+  const data = (await res.json().catch(() => ({}))) as ApiError & Record<string, unknown>;
+  if (!res.ok) {
+    let msg = typeof data.detail === "string" ? data.detail : res.statusText;
+    if (Array.isArray(data.detail)) {
+      const parts = data.detail.map((d: { msg?: string }) => d.msg).filter(Boolean);
+      if (parts.length) msg = parts.join("; ");
+    }
+    throw new Error(msg || "Upload failed");
+  }
+  return data as T;
+}
+
 /** POST JSON body, then trigger download of response as file (e.g. backup export). */
 export async function postAndDownload(path: string, body: unknown, suggestedName: string): Promise<void> {
   const token = localStorage.getItem("access_token");

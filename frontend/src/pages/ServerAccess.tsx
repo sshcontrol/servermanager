@@ -21,6 +21,7 @@ type ServerItemFromApi = {
   description: string | null;
   status: string;
   created_at: string;
+  server_groups?: { id: string; name: string }[];
 };
 
 type MyGroups = {
@@ -36,6 +37,7 @@ export default function ServerAccess() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [search, setSearch] = useState("");
 
   const linuxUsername = (user?.username || "root").toLowerCase().replace(/[^a-z0-9_]/g, "_").replace(/^_+|_+$/g, "") || "user";
 
@@ -66,15 +68,34 @@ export default function ServerAccess() {
   if (error) return <div className="container app-page"><p className="error-msg">{error}</p></div>;
 
   if (isAdmin) {
-    const servers = serversData;
+    const filtered = serversData.filter((s) => {
+      if (!search.trim()) return true;
+      const q = search.toLowerCase();
+      return (
+        (s.hostname || "").toLowerCase().includes(q) ||
+        (s.friendly_name || "").toLowerCase().includes(q) ||
+        (s.ip_address || "").toLowerCase().includes(q)
+      );
+    });
     return (
       <div className="container app-page">
-        <div className="page-header">
-          <Link to="/" className="btn-link">← Dashboard</Link>
-          <h1 style={{ marginTop: "0.5rem" }}>Server access</h1>
+        <div className="page-header page-header-actions">
+          <div>
+            <Link to="/" className="btn-link">← Dashboard</Link>
+            <h1 style={{ marginTop: "0.5rem" }}>Server access</h1>
+          </div>
+          {serversData.length > 0 && (
+            <input
+              type="text"
+              placeholder="Search servers…"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              style={{ width: 220, padding: "0.4rem 0.7rem", fontSize: "0.9rem" }}
+            />
+          )}
         </div>
 
-        {servers.length > 0 ? (
+        {filtered.length > 0 ? (
           <div className="card" style={{ marginBottom: "1.5rem" }}>
             <h2 className="card-subtitle">Connect to your servers</h2>
             <p style={{ color: "var(--text-muted)", fontSize: "0.9rem", marginBottom: "1rem" }}>
@@ -85,18 +106,32 @@ export default function ServerAccess() {
                 <thead>
                   <tr>
                     <th>Server</th>
+                    <th>Groups</th>
                     <th>Host</th>
                     <th>Connect</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {servers.map((s) => {
+                  {filtered.map((s) => {
                     const sshHost = s.ip_address || s.hostname;
                     const sshCmd = `ssh ${linuxUsername}@${sshHost}`;
                     return (
                       <tr key={s.id}>
                         <td>
-                          <Link to={`/server/${s.id}`}>{s.friendly_name || s.hostname}</Link>
+                          <span>{s.friendly_name || s.hostname}</span>
+                        </td>
+                        <td>
+                          {(s.server_groups?.length ?? 0) > 0 ? (
+                            <span style={{ display: "flex", flexWrap: "wrap", gap: "0.25rem" }}>
+                              {s.server_groups!.map((g) => (
+                                <Link key={g.id} to={`/server-groups/${g.id}`} className="badge badge-info" style={{ textDecoration: "none" }}>
+                                  {g.name}
+                                </Link>
+                              ))}
+                            </span>
+                          ) : (
+                            <span className="text-muted">—</span>
+                          )}
                         </td>
                         <td className="text-muted text-sm">{sshHost}</td>
                         <td>
@@ -124,7 +159,9 @@ export default function ServerAccess() {
         ) : (
           <div className="card" style={{ padding: "2rem", textAlign: "center" }}>
             <p style={{ color: "var(--text-muted)", marginBottom: 0 }}>
-              There is no server to show. Add a server from <Link to="/server/add">Add server</Link>.
+              {serversData.length === 0
+                ? <>There is no server to show. Add a server from <Link to="/server/add">Add server</Link>.</>
+                : "No servers match your search."}
             </p>
           </div>
         )}
@@ -133,14 +170,34 @@ export default function ServerAccess() {
   }
 
   const servers = groupsData?.servers ?? [];
+  const filteredUser = servers.filter((s) => {
+    if (!search.trim()) return true;
+    const q = search.toLowerCase();
+    return (
+      (s.hostname || "").toLowerCase().includes(q) ||
+      (s.friendly_name || "").toLowerCase().includes(q) ||
+      (s.ip_address || "").toLowerCase().includes(q)
+    );
+  });
   return (
     <div className="container app-page">
-      <div className="page-header">
-        <Link to="/" className="btn-link">← Dashboard</Link>
-        <h1 style={{ marginTop: "0.5rem" }}>Server access</h1>
+      <div className="page-header page-header-actions">
+        <div>
+          <Link to="/" className="btn-link">← Dashboard</Link>
+          <h1 style={{ marginTop: "0.5rem" }}>Server access</h1>
+        </div>
+        {servers.length > 0 && (
+          <input
+            type="text"
+            placeholder="Search servers…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            style={{ width: 220, padding: "0.4rem 0.7rem", fontSize: "0.9rem" }}
+          />
+        )}
       </div>
 
-      {servers.length > 0 ? (
+      {filteredUser.length > 0 ? (
         <div className="card" style={{ marginBottom: "1.5rem" }}>
           <h2 className="card-subtitle">Connect to your servers</h2>
           <p style={{ color: "var(--text-muted)", fontSize: "0.9rem", marginBottom: "1rem" }}>
@@ -155,14 +212,14 @@ export default function ServerAccess() {
                   <th>Connect</th>
                 </tr>
               </thead>
-              <tbody>
-                {servers.map((s) => {
+                <tbody>
+                {filteredUser.map((s) => {
                   const sshHost = s.ip_address || s.hostname;
                   const sshCmd = `ssh ${linuxUsername}@${sshHost}`;
                   return (
                     <tr key={s.id}>
                       <td>
-                        <Link to={`/server/${s.id}`}>{s.friendly_name || s.hostname}</Link>
+                        <span>{s.friendly_name || s.hostname}</span>
                       </td>
                       <td className="text-muted text-sm">{sshHost}</td>
                       <td>
@@ -190,7 +247,9 @@ export default function ServerAccess() {
       ) : (
         <div className="card" style={{ padding: "2rem", textAlign: "center" }}>
           <p style={{ color: "var(--text-muted)", marginBottom: 0 }}>
-            No servers assigned yet. Ask your admin to grant you access.
+            {servers.length === 0
+              ? "No servers assigned yet. Ask your admin to grant you access."
+              : "No servers match your search."}
           </p>
         </div>
       )}

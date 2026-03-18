@@ -60,7 +60,7 @@ class TOTPVerifyRequest(BaseModel):
 
 
 class TOTPDisableRequest(BaseModel):
-    password: str
+    password: str | None = None  # Required for non-Google users; omit for Google sign-in users who have no password
 
 
 class ChangePasswordRequest(BaseModel):
@@ -100,6 +100,12 @@ class VerifyPhoneRequest(BaseModel):
     """Verify phone with code from SMS. Sets phone and phone_verified=True."""
     phone: str = Field(..., min_length=10, max_length=20, pattern=r"^\+[1-9]\d{8,14}$")
     code: str = Field(..., min_length=4, max_length=8)
+
+
+class RequestPhoneChangeRequest(BaseModel):
+    """Request SMS code to change to a new phone. Password required when current phone is verified."""
+    phone: str = Field(..., min_length=10, max_length=20, pattern=r"^\+[1-9]\d{8,14}$")
+    password: str | None = None  # Required when phone_verified=True
 
 
 class SmsVerificationToggleRequest(BaseModel):

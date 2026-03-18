@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { api } from "../api/client";
+import Toggle from "../components/Toggle";
 
 type EmailSettingsData = {
   sendgrid_api_key_masked: string;
@@ -211,13 +212,7 @@ export default function SuperadminEmail() {
           </div>
 
           <div className="form-group" style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
-            <input
-              type="checkbox"
-              checked={enabled}
-              onChange={(e) => setEnabled(e.target.checked)}
-              style={{ width: "auto", accentColor: "var(--accent)" }}
-              id="email-enabled"
-            />
+            <Toggle id="email-enabled" checked={enabled} onChange={setEnabled} />
             <label htmlFor="email-enabled" style={{ margin: 0 }}>
               Enable email sending
             </label>

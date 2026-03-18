@@ -7,7 +7,13 @@ from app.core.security import validate_password_strength
 
 class ServerAccessItem(BaseModel):
     server_id: str
-    role: str = Field(..., pattern="^(admin|user)$")
+    role: str = Field(..., pattern="^(root|user)$")  # root = Linux elevated/sudo, user = Linux regular
+
+    @field_validator("role", mode="before")
+    @classmethod
+    def normalize_role(cls, v: str) -> str:
+        """Accept legacy 'admin' and normalize to 'root'."""
+        return "root" if v == "admin" else v
 
 
 class UserBase(BaseModel):
@@ -88,6 +94,7 @@ class UserResponse(BaseModel):
     created_at: datetime
     roles: List[RoleBrief] = []
     server_access: List[ServerAccessItem] = []
+    effective_server_access: List[ServerAccessItem] | None = None  # From direct + server groups + user groups; set by API when needed
 
     class Config:
         from_attributes = True

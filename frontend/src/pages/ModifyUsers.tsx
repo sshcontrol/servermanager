@@ -5,6 +5,7 @@ import { useAuth } from "../contexts/AuthContext";
 import { useToast } from "../components/Toast";
 import DestructiveVerificationModal from "../components/DestructiveVerificationModal";
 import Spinner from "../components/Spinner";
+import Toggle from "../components/Toggle";
 import { normalizeToE164, isValidE164 } from "../lib/phone";
 
 type UserRow = {
@@ -21,13 +22,14 @@ type UserRow = {
   created_at: string;
   roles: { id: string; name: string }[];
   server_access?: { server_id: string; role: string }[];
+  effective_server_access?: { server_id: string; role: string }[];
 };
 type RoleOption = { id: string; name: string; description: string | null };
 type ServerItem = { id: string; hostname: string; friendly_name: string | null; ip_address: string | null; description: string | null; status: string };
 
 export default function ModifyUsers() {
   const { user: currentUser } = useAuth();
-  const { toast } = useToast();
+  const { toast, showSuccessModal } = useToast();
   const [users, setUsers] = useState<UserRow[]>([]);
   const [total, setTotal] = useState(0);
   const [roles, setRoles] = useState<RoleOption[]>([]);
@@ -40,7 +42,7 @@ export default function ModifyUsers() {
   const [editUsername, setEditUsername] = useState("");
   const [editEmail, setEditEmail] = useState("");
   const [editRoleIds, setEditRoleIds] = useState<string[]>([]);
-  const [editServerAccess, setEditServerAccess] = useState<Record<string, "admin" | "user">>({});
+  const [editServerAccess, setEditServerAccess] = useState<Record<string, "root" | "user">>({});
   const [editIsActive, setEditIsActive] = useState(true);
   const [editTotpEnabled, setEditTotpEnabled] = useState(false);
   const [editLoading, setEditLoading] = useState(false);
@@ -117,7 +119,7 @@ export default function ModifyUsers() {
     setError("");
     try {
       const res = await api.get<{ users: UserRow[]; total: number }>(
-        `/api/users?skip=${skip}&limit=${limit}`
+        `/api/users?skip=${skip}&limit=${limit}&exclude_admins=true`
       );
       setUsers(res.users);
       setTotal(res.total);
@@ -148,11 +150,12 @@ export default function ModifyUsers() {
     setEditIsActive(user.is_active);
     setEditTotpEnabled(user.totp_enabled);
     setEditPhone(user.phone ?? "");
+    const eff = user.effective_server_access ?? user.server_access ?? [];
+    const acc: Record<string, "root" | "user"> = {};
+    eff.forEach((a) => { if (a.role === "root" || a.role === "admin" || a.role === "user") acc[a.server_id] = (a.role === "admin" ? "root" : a.role) as "root" | "user"; });
     setEditPhoneVerified(user.phone_verified ?? false);
     setEditPhoneStep("enter");
     setEditPhoneVerifyCode("");
-    const acc: Record<string, "admin" | "user"> = {};
-    (user.server_access || []).forEach((a) => { if (a.role === "admin" || a.role === "user") acc[a.server_id] = a.role; });
     setEditServerAccess(acc);
     try {
       const fresh = await api.get<UserRow>(`/api/users/${user.id}`);
@@ -163,8 +166,9 @@ export default function ModifyUsers() {
       setEditTotpEnabled(fresh.totp_enabled);
       setEditPhone(fresh.phone ?? "");
       setEditPhoneVerified(fresh.phone_verified ?? false);
-      const freshAcc: Record<string, "admin" | "user"> = {};
-      (fresh.server_access || []).forEach((a) => { if (a.role === "admin" || a.role === "user") freshAcc[a.server_id] = a.role; });
+      const freshEff = fresh.effective_server_access ?? fresh.server_access ?? [];
+      const freshAcc: Record<string, "root" | "user"> = {};
+      freshEff.forEach((a) => { if (a.role === "root" || a.role === "admin" || a.role === "user") freshAcc[a.server_id] = (a.role === "admin" ? "root" : a.role) as "root" | "user"; });
       setEditServerAccess(freshAcc);
     } catch {
       // keep initial values if fetch fails
@@ -237,7 +241,7 @@ export default function ModifyUsers() {
     setEditLoading(true);
     try {
       const server_access = Object.entries(editServerAccess)
-        .filter(([, role]) => role === "admin" || role === "user")
+        .filter(([, role]) => role === "root" || role === "user")
         .map(([server_id, role]) => ({ server_id, role }));
       const res = await api.patch<{ sync_results?: { server_name: string; success: boolean; error?: string }[] }>(
         `/api/users/${editingUserId}`,
@@ -252,7 +256,7 @@ export default function ModifyUsers() {
       );
       const sync = res?.sync_results || [];
       const syncMsg = sync.length > 0 ? formatSyncResults(sync) : "User updated.";
-      toast("success", syncMsg);
+      showSuccessModal(syncMsg);
       setEditingUserId(null);
       loadUsers();
     } catch (e) {
@@ -278,7 +282,10 @@ export default function ModifyUsers() {
   return (
     <div className="container app-page">
       <div className="page-header page-header-actions">
-        <h1>Modify users</h1>
+        <div>
+          <Link to="/" className="btn-link">← Dashboard</Link>
+          <h1 style={{ marginTop: "0.5rem" }}>Modify users</h1>
+        </div>
         <div className="page-actions">
           {!editingUserId && !loading && users.length > 0 && (
             <input
@@ -301,7 +308,7 @@ export default function ModifyUsers() {
         </p>
       )}
       {editingUserId ? (
-        <div className="card card-form" style={{ marginBottom: "1.5rem", maxWidth: 560 }}>
+        <div className="card card-form" style={{ marginBottom: "1.5rem", maxWidth: "100%" }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "0.5rem", marginBottom: "1rem" }}>
             <h2 className="card-subtitle" style={{ marginBottom: 0 }}>Edit user</h2>
             <button type="button" className="btn-outline" onClick={() => setEditingUserId(null)}>← Back to users</button>
@@ -318,12 +325,12 @@ export default function ModifyUsers() {
             <div className="form-group">
               <label className="edit-user-section-label">Status</label>
               <div className="form-check-group form-check-group-vertical">
-                <label htmlFor="edit-is-active" className="form-check-label">
-                  <input id="edit-is-active" type="checkbox" checked={editIsActive} onChange={(e) => setEditIsActive(e.target.checked)} />
+                <label htmlFor="edit-is-active" className="form-check-label" style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
+                  <Toggle id="edit-is-active" checked={editIsActive} onChange={setEditIsActive} />
                   <span>Active (user can log in)</span>
                 </label>
-                <label htmlFor="edit-totp-enabled" className="form-check-label">
-                  <input id="edit-totp-enabled" type="checkbox" checked={editTotpEnabled} onChange={(e) => setEditTotpEnabled(e.target.checked)} />
+                <label htmlFor="edit-totp-enabled" className="form-check-label" style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
+                  <Toggle id="edit-totp-enabled" checked={editTotpEnabled} onChange={setEditTotpEnabled} />
                   <span>2FA enabled (uncheck to disable 2FA for this user)</span>
                 </label>
               </div>
@@ -372,8 +379,8 @@ export default function ModifyUsers() {
               <label className="edit-user-section-label">Roles</label>
               <div className="form-check-group form-check-group-vertical">
                 {roles.map((r) => (
-                  <label key={r.id} className="form-check-label">
-                    <input type="checkbox" checked={editRoleIds.includes(r.id)} onChange={() => toggleEditRole(r.id)} />
+                  <label key={r.id} className="form-check-label" style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
+                    <Toggle checked={editRoleIds.includes(r.id)} onChange={() => toggleEditRole(r.id)} />
                     <span>{r.name}</span>
                   </label>
                 ))}
@@ -382,7 +389,7 @@ export default function ModifyUsers() {
             {servers.length > 0 && (
               <div className="form-group">
                 <label className="edit-user-section-label">Server access</label>
-                <p className="text-muted text-sm mb-1">Admin = can manage access on that server; User = view/use.</p>
+                <p className="text-muted text-sm mb-1">Root = Linux elevated (sudo); User = Linux regular user.</p>
                 <div className="edit-user-server-access">
                   {servers.map((s) => (
                     <div key={s.id} className="edit-user-server-row">
@@ -390,7 +397,7 @@ export default function ModifyUsers() {
                       <select
                         value={editServerAccess[s.id] || ""}
                         onChange={(e) => {
-                          const v = e.target.value as "" | "admin" | "user";
+                          const v = e.target.value as "" | "root" | "user";
                           setEditServerAccess((prev) =>
                             v ? { ...prev, [s.id]: v } : (() => { const { [s.id]: _, ...rest } = prev; return rest; })()
                           );
@@ -398,7 +405,7 @@ export default function ModifyUsers() {
                       >
                         <option value="">No access</option>
                         <option value="user">User</option>
-                        <option value="admin">Admin</option>
+                        <option value="root">Root</option>
                       </select>
                     </div>
                   ))}
@@ -420,7 +427,7 @@ export default function ModifyUsers() {
             <Spinner />
           ) : (
             <>
-              <div className="table-wrap">
+              <div className="card table-wrap">
                 <table>
                   <thead>
                     <tr>
@@ -428,6 +435,7 @@ export default function ModifyUsers() {
                       <th>Email</th>
                       <th>Status</th>
                       <th>Roles</th>
+                      <th>Server access</th>
                       <th>2FA</th>
                       <th>Active</th>
                       <th style={{ textAlign: "right" }}>Actions</th>
@@ -436,7 +444,7 @@ export default function ModifyUsers() {
                   <tbody>
                     {filtered.length === 0 ? (
                       <tr>
-                        <td colSpan={7} className="text-muted" style={{ padding: "1.5rem" }}>
+                        <td colSpan={8} className="text-muted" style={{ padding: "1.5rem" }}>
                           {search ? "No users match your search." : "No users found."}
                         </td>
                       </tr>
@@ -453,6 +461,18 @@ export default function ModifyUsers() {
                             )}
                           </td>
                           <td>{u.roles.map((r) => r.name).join(", ") || "—"}</td>
+                          <td>
+                            {(() => {
+                              const eff = u.effective_server_access ?? u.server_access ?? [];
+                              if (eff.length === 0) return <span className="text-muted">No access</span>;
+                              const rootCount = eff.filter((a) => a.role === "root" || a.role === "admin").length;
+                              const userCount = eff.filter((a) => a.role === "user").length;
+                              const parts: string[] = [];
+                              if (rootCount) parts.push(`${rootCount} root`);
+                              if (userCount) parts.push(`${userCount} user`);
+                              return parts.join(", ");
+                            })()}
+                          </td>
                           <td>{u.totp_enabled ? <span className="badge badge-success">Yes</span> : "No"}</td>
                           <td>{u.is_active ? <span className="badge badge-success">Yes</span> : <span className="badge badge-danger">No</span>}</td>
                           <td style={{ textAlign: "right" }}>
@@ -500,8 +520,8 @@ export default function ModifyUsers() {
 
       {/* Pending Invitations */}
       {!editingUserId && invitations.filter((i) => !i.accepted).length > 0 && (
-        <div style={{ marginTop: "2rem" }}>
-          <h2 style={{ fontSize: "1.1rem", color: "var(--text-primary)", marginBottom: "0.75rem" }}>Pending Invitations</h2>
+        <div className="card" style={{ marginTop: "2rem", maxWidth: "100%" }}>
+          <h2 className="card-subtitle" style={{ marginBottom: "1rem" }}>Pending Invitations</h2>
           <div className="table-wrap">
             <table>
               <thead>

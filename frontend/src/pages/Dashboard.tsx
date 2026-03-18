@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
 import { api } from "../api/client";
 
@@ -16,17 +16,22 @@ type UserStats = {
   inactive: number;
 };
 
-type MyGroups = {
-  user_groups: { id: string; name: string }[];
-  server_groups: { id: string; name: string; role: string }[];
-  servers: { id: string; hostname: string; friendly_name: string | null; ip_address: string | null; source: string; source_name: string | null }[];
+type PlanLimits = {
+  plan_name: string;
+  max_users: number;
+  current_users: number;
+  max_servers: number;
+  current_servers: number;
+  starts_at: string | null;
+  expires_at: string | null;
 };
 
 export default function Dashboard() {
   const { user, isAdmin } = useAuth();
+  const navigate = useNavigate();
   const [serverStats, setServerStats] = useState<ServerStats | null>(null);
   const [userStats, setUserStats] = useState<UserStats | null>(null);
-  const [myGroups, setMyGroups] = useState<MyGroups | null>(null);
+  const [planLimits, setPlanLimits] = useState<PlanLimits | null>(null);
 
   useEffect(() => {
     api
@@ -42,8 +47,17 @@ export default function Dashboard() {
   }, [isAdmin]);
 
   useEffect(() => {
-    api.get<MyGroups>("/api/users/me/groups").then(setMyGroups).catch(() => setMyGroups(null));
-  }, []);
+    if (user?.tenant_id) {
+      api.get<PlanLimits>("/api/auth/plan-limits").then(setPlanLimits).catch(() => setPlanLimits(null));
+    }
+  }, [user?.tenant_id]);
+
+  const planDaysLeft =
+    planLimits?.expires_at
+      ? Math.ceil((new Date(planLimits.expires_at).getTime() - Date.now()) / (1000 * 60 * 60 * 24))
+      : null;
+  const planExpired = planDaysLeft !== null && planDaysLeft < 0;
+  const planUrgent = planDaysLeft !== null && planDaysLeft >= 0 && planDaysLeft <= 10;
 
   if (isAdmin) {
     return (
@@ -54,8 +68,23 @@ export default function Dashboard() {
           <p className="dashboard-welcome">Welcome back, <strong>{user?.username}</strong></p>
         </header>
 
+        {planLimits && planLimits.plan_name && planLimits.plan_name !== "N/A" && planLimits.plan_name !== "None" && (
+          <div className={`dashboard-plan-card ${planExpired ? "dashboard-plan-expired" : planUrgent ? "dashboard-plan-urgent" : ""}`}>
+            <span className="dashboard-plan-label">Your plan:</span>
+            <div className="dashboard-plan-info">
+              <span className="dashboard-plan-name">{planLimits.plan_name}</span>
+              <span className="dashboard-plan-days">
+                {planDaysLeft === null ? "" : planDaysLeft >= 0 ? `${planDaysLeft} days left` : `${Math.abs(planDaysLeft)} days overdue`}
+              </span>
+              {planExpired && (
+                <Link to="/plan-billing/plan" className="dashboard-plan-renew">Renew plan</Link>
+              )}
+            </div>
+          </div>
+        )}
+
         <div className="dashboard-admin-cards">
-          <Link to="/server" className="dashboard-admin-card dashboard-admin-card-servers">
+          <Link to="/server/access" className="dashboard-admin-card dashboard-admin-card-servers">
             <div className="dashboard-admin-card-icon" aria-hidden>
               <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <rect x="2" y="2" width="20" height="8" rx="2" ry="2" />
@@ -120,53 +149,33 @@ export default function Dashboard() {
         <p className="dashboard-welcome">Welcome back, <strong>{user?.username}</strong></p>
       </header>
 
+      {planLimits && planLimits.plan_name && (
+        <div className={`dashboard-plan-card ${planExpired ? "dashboard-plan-expired" : planUrgent ? "dashboard-plan-urgent" : ""}`}>
+          <div className="dashboard-plan-info">
+            <span className="dashboard-plan-name">{planLimits.plan_name}</span>
+            <span className="dashboard-plan-days">
+              {planDaysLeft === null ? "" : planDaysLeft >= 0 ? `${planDaysLeft} days left` : `${Math.abs(planDaysLeft)} days overdue`}
+            </span>
+          </div>
+          {planExpired && (
+            <Link to="/plan-billing/plan" className="dashboard-plan-renew">Renew plan</Link>
+          )}
+        </div>
+      )}
+
       <div className="dashboard-cards">
-        <div className="dashboard-card dashboard-card-link">
-          <Link to="/server" className="dashboard-card-link-inner">
+        <div className="dashboard-card dashboard-card-link" onClick={() => navigate("/server/access")} role="button" tabIndex={0} onKeyDown={(e) => e.key === "Enter" && navigate("/server/access")}>
+          <div className="dashboard-card-link-inner">
             <span className="dashboard-card-link-icon">Server</span>
             <span className="dashboard-card-link-text">Servers</span>
             <span className="dashboard-card-link-desc">
               {serverStats?.assigned_count !== undefined
                 ? `${serverStats.assigned_count} assigned server(s)`
-                : "Your connected servers"}
+                : "Connect to your servers"}
             </span>
-          </Link>
+          </div>
         </div>
       </div>
-
-      {myGroups && (myGroups.user_groups.length > 0 || myGroups.server_groups.length > 0 || myGroups.servers.length > 0) && (
-        <section className="card" style={{ marginTop: "1.5rem" }}>
-          <h2 className="card-subtitle">Your groups & servers</h2>
-          {myGroups.user_groups.length > 0 && (
-            <p style={{ marginBottom: "0.5rem" }}>
-              <strong>User groups:</strong> {myGroups.user_groups.map((g) => g.name).join(", ")}
-            </p>
-          )}
-          {myGroups.server_groups.length > 0 && (
-            <p style={{ marginBottom: "0.5rem" }}>
-              <strong>Server groups:</strong> {myGroups.server_groups.map((g) => `${g.name} (${g.role})`).join(", ")}
-            </p>
-          )}
-          {myGroups.servers.length > 0 && (
-            <>
-              <p style={{ marginBottom: "0.5rem" }}><strong>Servers you can access:</strong></p>
-              <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
-                {myGroups.servers.map((s) => (
-                  <li key={s.id} style={{ padding: "0.35rem 0", borderBottom: "1px solid var(--border)" }}>
-                    <Link to={`/server/${s.id}`}>{s.friendly_name || s.hostname}</Link>
-                    <span className="text-muted" style={{ fontSize: "0.85rem", marginLeft: "0.5rem" }}>
-                      {s.source === "direct" && "(direct access)"}
-                      {s.source === "server_group" && s.source_name && `(via server group: ${s.source_name})`}
-                      {s.source === "user_group" && s.source_name && `(via user group: ${s.source_name})`}
-                      {s.source === "admin" && "(admin)"}
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            </>
-          )}
-        </section>
-      )}
       </div>
     </div>
   );

@@ -66,9 +66,10 @@ export default function UserGroupsList() {
 
   return (
     <div className="container app-page">
-      <div className="page-header" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "0.75rem" }}>
+      <div className="page-header page-header-actions" style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: "0.75rem" }}>
         <div>
-          <h1>User groups</h1>
+          <Link to="/" className="btn-link">← Dashboard</Link>
+          <h1 style={{ marginTop: "0.5rem" }}>User groups</h1>
           <p style={{ color: "var(--text-muted)", fontSize: "0.95rem", marginTop: "0.25rem", marginBottom: 0 }}>
             Create a group of users, then assign the group to a server (with a role). All members get that role on the server.
           </p>

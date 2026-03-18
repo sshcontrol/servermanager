@@ -1,4 +1,5 @@
-"""Full database backup: export as encrypted file, import to restore. Not human-readable."""
+"""Full database backup: export as encrypted file, import to restore. Not human-readable.
+Imports all models so Base.metadata has every table for complete export/restore."""
 
 import base64
 import gzip
@@ -11,9 +12,12 @@ from uuid import UUID
 from cryptography.fernet import Fernet
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
-from sqlalchemy import text
+from sqlalchemy import insert, text
 
 from app.database import engine, Base
+
+# Ensure all models are registered in Base.metadata for complete export/restore
+import app.models  # noqa: F401
 
 BACKUP_VERSION = 1
 PBKDF2_ITERATIONS = 120_000
@@ -122,10 +126,11 @@ def import_backup(encrypted_data: bytes, password: str) -> None:
             rows = tables_data.get(name, [])
             if not rows:
                 continue
+            rows_to_insert = []
             for row in rows:
                 cols = [c.name for c in table.c if c.name in row]
-                if not cols:
-                    continue
-                ins = table.insert().values(**{k: row[k] for k in cols})
-                conn.execute(ins)
+                if cols:
+                    rows_to_insert.append({k: row[k] for k in cols})
+            if rows_to_insert:
+                conn.execute(insert(table), rows_to_insert)
         conn.execute(text("SET session_replication_role = default"))

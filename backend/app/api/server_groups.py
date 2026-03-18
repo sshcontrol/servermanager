@@ -44,7 +44,7 @@ class ServerGroupUpdate(BaseModel):
 
 class GroupUserAccessBody(BaseModel):
     user_id: str
-    role: str  # admin | user
+    role: str  # root | user (Linux user type for server assignment)
 
 
 class AddServerBody(BaseModel):
@@ -245,8 +245,8 @@ async def set_group_user_access(
     current_user: Annotated[User, Depends(require_superuser)],
 ):
     _require_tenant_admin(current_user)
-    if body.role not in ("admin", "user"):
-        raise HTTPException(status_code=400, detail="role must be admin or user")
+    if body.role not in ("root", "user"):
+        raise HTTPException(status_code=400, detail="role must be root or user")
     if not await sgs.get_server_group(db, group_id, current_user.tenant_id):
         raise HTTPException(status_code=404, detail="Server group not found")
     ok = await sgs.set_group_user_access(db, group_id, body.user_id, body.role, current_user.tenant_id)

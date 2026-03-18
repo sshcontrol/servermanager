@@ -12,11 +12,11 @@ type UserGroupDetail = {
   members: { user_id: string; username: string; email: string }[];
 };
 
-type UserItem = { id: string; username: string; email: string };
+type UserItem = { id: string; username: string; email: string; is_superuser?: boolean; roles?: { id: string; name: string }[] };
 
 export default function UserGroupDetailPage() {
   const { id } = useParams<{ id: string }>();
-  const { toast } = useToast();
+  const { showSuccessModal } = useToast();
   const [group, setGroup] = useState<UserGroupDetail | null>(null);
   const [allUsers, setAllUsers] = useState<UserItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -33,7 +33,7 @@ export default function UserGroupDetailPage() {
     setLoading(true);
     Promise.all([
       api.get<UserGroupDetail>(`/api/user-groups/${id}`),
-      api.get<{ users: UserItem[] }>("/api/users?limit=500").then((r) => r.users || []),
+      api.get<{ users: UserItem[] }>("/api/users?limit=500").then((r) => (r.users || []).filter((u) => !(u.is_superuser || (u.roles || []).some((role) => role.name === "admin")))),
     ])
       .then(([g, users]) => {
         setGroup(g);
@@ -52,6 +52,7 @@ export default function UserGroupDetailPage() {
     if (!id) return;
     try {
       await api.patch(`/api/user-groups/${id}`, { name: editName.trim(), description: editDesc.trim() || null });
+      showSuccessModal();
       setEditing(false);
       load();
     } catch (e) {
@@ -77,7 +78,7 @@ export default function UserGroupDetailPage() {
       setAddUserId("");
       load();
       const sync = res?.sync_results || [];
-      toast("success", sync.length > 0 ? formatSyncResults(sync) : "Member added.");
+      showSuccessModal( sync.length > 0 ? formatSyncResults(sync) : "Member added.");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to add member");
     }
@@ -94,7 +95,7 @@ export default function UserGroupDetailPage() {
           );
           load();
           const sync = res?.sync_results || [];
-          toast("success", sync.length > 0 ? formatSyncResults(sync) : "Member removed from group.");
+          showSuccessModal( sync.length > 0 ? formatSyncResults(sync) : "Member removed from group.");
         } catch (e) {
           setError(e instanceof Error ? e.message : "Failed to remove");
         }
@@ -109,12 +110,11 @@ export default function UserGroupDetailPage() {
 
   return (
     <div className="container app-page">
-      <nav className="breadcrumb">
-        <Link to="/user-groups">User groups</Link>
-        <span>{group.name}</span>
-      </nav>
-      <h1 className="app-page-title">{group.name}</h1>
-      {group.description && <p className="text-muted">{group.description}</p>}
+      <div className="page-header">
+        <Link to="/user-groups" className="btn-link">← User groups</Link>
+        <h1 style={{ marginTop: "0.5rem" }}>{group.name}</h1>
+        {group.description && <p className="text-muted" style={{ marginTop: "0.25rem" }}>{group.description}</p>}
+      </div>
       {error && <p className="error-msg">{error}</p>}
 
       {!editing ? (

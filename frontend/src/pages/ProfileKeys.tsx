@@ -2,15 +2,25 @@ import { useState, useEffect } from "react";
 import { Link } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
 import { api, downloadFile } from "../api/client";
-import { useToast } from "../components/Toast";
 import ConfirmModal from "../components/ConfirmModal";
 import Spinner from "../components/Spinner";
 
 type ProfileKeysProps = { embedded?: boolean };
 
+function truncateKey(key: string, head = 24, tail = 12): string {
+  if (!key || key.length <= head + tail + 6) return key;
+  return `${key.slice(0, head)}...${key.slice(-tail)}`;
+}
+
+function truncateFingerprint(fp: string, len = 16): string {
+  if (!fp || fp.length <= len) return fp;
+  return `${fp.slice(0, len)}...`;
+}
+
 export default function ProfileKeys({ embedded }: ProfileKeysProps) {
   const { user, isAdmin } = useAuth();
   const [message, setMessage] = useState<{ type: "error" | "success"; text: string } | null>(null);
+  const [keyChangeModalOpen, setKeyChangeModalOpen] = useState(false);
   const [sshKey, setSshKey] = useState<{ has_key: boolean; public_key?: string; fingerprint?: string } | null>(null);
   const [sshKeyLoading, setSshKeyLoading] = useState(false);
   const [regenerating, setRegenerating] = useState(false);
@@ -19,9 +29,9 @@ export default function ProfileKeys({ embedded }: ProfileKeysProps) {
   const [userKeyRegenerating, setUserKeyRegenerating] = useState(false);
   const [ownKeyInput, setOwnKeyInput] = useState("");
   const [savingOwnKey, setSavingOwnKey] = useState(false);
-  const { toast } = useToast();
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [confirmAction, setConfirmAction] = useState<{ msg: string; fn: () => Promise<void> } | null>(null);
+  const [helpOpen, setHelpOpen] = useState(false);
 
   const fetchSshKey = async () => {
     if (!isAdmin) return;
@@ -56,395 +66,222 @@ export default function ProfileKeys({ embedded }: ProfileKeysProps) {
     fetchMyKey();
   }, [user?.id]);
 
+  const handleUploadKey = async () => {
+    const line = ownKeyInput.trim().split("\n")[0];
+    if (!line) return;
+    setSavingOwnKey(true);
+    setMessage(null);
+    try {
+      await api.post("/api/users/me/ssh-key/public", { public_key: line });
+      setOwnKeyInput("");
+      await fetchMyKey();
+      setKeyChangeModalOpen(true);
+    } catch (e: unknown) {
+      const msg = e && typeof e === "object" && "detail" in e ? String((e as { detail: unknown }).detail) : (e instanceof Error ? e.message : "Failed to save key");
+      setMessage({ type: "error", text: msg });
+    } finally {
+      setSavingOwnKey(false);
+    }
+  };
+
+  const HelpContent = () => (
+    <div style={{ fontSize: "0.95rem", lineHeight: 1.6 }}>
+      <h4 style={{ marginBottom: "0.5rem" }}>How to create an SSH key</h4>
+      <p><strong>Mac / Linux:</strong> Open Terminal. Run: <code>ssh-keygen -t ed25519 -C "your@email.com"</code></p>
+      <p><strong>Windows:</strong> Open PowerShell. Run the same command, or use PuTTYgen to generate a key.</p>
+      <h4 style={{ marginTop: "1rem", marginBottom: "0.5rem" }}>How to find your public key</h4>
+      <p><strong>Mac / Linux:</strong> <code>~/.ssh/id_ed25519.pub</code> or <code>~/.ssh/id_rsa.pub</code></p>
+      <p><strong>Windows:</strong> <code>%USERPROFILE%\.ssh\id_ed25519.pub</code> — open in Notepad and copy the whole line.</p>
+      <h4 style={{ marginTop: "1rem", marginBottom: "0.5rem" }}>How to use your key</h4>
+      <p><strong>Terminal:</strong> <code>ssh -i ~/.ssh/id_ed25519 youruser@server-ip</code></p>
+      <p><strong>PuTTY:</strong> Connection → SSH → Auth → Private key file: browse to your .ppk file.</p>
+    </div>
+  );
+
   const content = (
     <>
       {!embedded && (
-        <div className="page-header">
-          <Link to="/" className="btn-link">← Dashboard</Link>
-          <h1 style={{ marginTop: "0.5rem" }}>Key</h1>
+        <div className="page-header page-header-actions">
+          <div>
+            <Link to="/" className="btn-link">← Dashboard</Link>
+            <h1 style={{ marginTop: "0.5rem" }}>SSH Key</h1>
+            <p style={{ color: "var(--text-muted)", fontSize: "0.95rem", marginTop: "0.25rem" }}>
+              {isAdmin ? "One key for all servers. Upload your own or use the system-generated key." : "Your key is used to connect to servers. Upload your own or generate one."}
+            </p>
+          </div>
+          <button type="button" className="btn-outline" onClick={() => setHelpOpen(true)} aria-label="Help">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ marginRight: 6, verticalAlign: "middle" }}><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+            Help
+          </button>
         </div>
       )}
-      {isAdmin && !myKey?.uses_own_key && (
-        <div className="card" style={{ marginBottom: "1.5rem" }}>
-          <h2 className="card-subtitle">Platform SSH key</h2>
-          <p style={{ color: "var(--text-muted)", marginBottom: "1rem", fontSize: "0.95rem" }}>
-            One SSH key is used to access all servers. Regenerate to rotate the key; then re-deploy to servers that already use it.
-          </p>
-          {sshKeyLoading ? (
-            <Spinner />
-          ) : !sshKey?.has_key ? (
-            <div>
-              <p className="text-muted text-sm mb-1">No platform key yet.</p>
-              <button
-                type="button"
-                className="primary"
-                disabled={regenerating}
-                onClick={async () => {
-                  setRegenerating(true);
-                  setMessage(null);
-                  try {
-                    await api.post("/api/admin/ssh-key/regenerate");
-                    setMessage({ type: "success", text: "Platform SSH key generated." });
-                    await fetchSshKey();
-                  } catch (e) {
-                    setMessage({ type: "error", text: e instanceof Error ? e.message : "Failed to generate key" });
-                  } finally {
-                    setRegenerating(false);
-                  }
-                }}
-              >
-                {regenerating ? "Generating…" : "Generate key"}
-              </button>
+
+      {helpOpen && (
+        <div className="confirm-overlay" onClick={() => setHelpOpen(false)} role="dialog" aria-label="SSH Key Help">
+          <div className="confirm-dialog" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 480 }}>
+            <div className="confirm-title">SSH Key Help</div>
+            <div className="confirm-message" style={{ textAlign: "left" }}>
+              <HelpContent />
             </div>
+            <div className="confirm-actions">
+              <button type="button" className="btn-outline" onClick={() => setHelpOpen(false)}>Close</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {keyChangeModalOpen && (
+        <div className="confirm-overlay" onClick={() => setKeyChangeModalOpen(false)} role="dialog">
+          <div className="confirm-dialog" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 400 }}>
+            <div className="confirm-title">SSH key updated</div>
+            <div className="confirm-message">
+              Your SSH key has been changed. Updates will sync to all servers within 5 minutes.
+            </div>
+            <div className="confirm-actions">
+              <button type="button" className="primary" onClick={() => setKeyChangeModalOpen(false)}>OK</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {isAdmin && myKey?.uses_own_key && (
+        <p style={{ color: "var(--text-muted)", fontSize: "0.9rem", marginBottom: "1rem", padding: "0.75rem 1rem", background: "rgba(255,255,255,0.04)", borderRadius: 8, border: "1px solid var(--border)" }}>
+          You use your own key. Platform key is hidden. Switch to system key below to manage and download PEM/PPK.
+        </p>
+      )}
+      {isAdmin && !myKey?.uses_own_key && (
+        <div className="card keys-section">
+          <h2 className="card-subtitle">Platform SSH key</h2>
+          <p style={{ color: "var(--text-muted)", marginBottom: "1rem", fontSize: "0.9rem" }}>
+            Used for root access to all servers. Regenerate to rotate; re-deploy servers after.
+          </p>
+          {sshKeyLoading ? <Spinner /> : !sshKey?.has_key ? (
+            <button type="button" className="primary" disabled={regenerating} onClick={async () => {
+              setRegenerating(true); setMessage(null);
+              try {
+                await api.post("/api/admin/ssh-key/regenerate");
+                setKeyChangeModalOpen(true);
+                await fetchSshKey();
+              } catch (e) {
+                setMessage({ type: "error", text: e instanceof Error ? e.message : "Failed" });
+              } finally { setRegenerating(false); }
+            }}>
+              {regenerating ? "Generating…" : "Generate key"}
+            </button>
           ) : (
             <div>
-              {sshKey.fingerprint && (
-                <p style={{ marginBottom: "0.5rem", fontSize: "0.9rem", color: "var(--text-muted)" }}>
-                  Fingerprint: <code>{sshKey.fingerprint}</code>
-                </p>
-              )}
-              {sshKey.public_key && (
-                <pre className="key-block" style={{ fontSize: "0.8rem", overflow: "auto", marginBottom: "1rem", padding: "0.75rem", background: "var(--bg-subtle)", borderRadius: "6px" }}>
-                  {sshKey.public_key}
-                </pre>
-              )}
-              <div style={{ display: "flex", gap: "0.75rem", flexWrap: "wrap" }}>
-                <button
-                  type="button"
-                  disabled={regenerating}
-                  onClick={() => {
-                    setConfirmAction({
-                      msg: "Regenerating will invalidate the current key. You must re-deploy to all servers. Continue?",
-                      fn: async () => {
-                        setRegenerating(true);
-                        setMessage(null);
-                        try {
-                          await api.post("/api/admin/ssh-key/regenerate");
-                          toast("success", "Platform SSH key regenerated.");
-                          await fetchSshKey();
-                        } catch (e) {
-                          setMessage({ type: "error", text: e instanceof Error ? e.message : "Failed to regenerate key" });
-                        } finally {
-                          setRegenerating(false);
-                        }
-                      },
-                    });
-                    setConfirmOpen(true);
-                  }}
-                >
-                  {regenerating ? "Regenerating…" : "Regenerate"}
-                </button>
-                <button
-                  type="button"
-                  onClick={async () => {
+              {sshKey.fingerprint && <p style={{ fontSize: "0.85rem", color: "var(--text-muted)", marginBottom: "0.5rem" }}>Fingerprint: <code>{truncateFingerprint(sshKey.fingerprint)}</code></p>}
+              <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
+                <button type="button" disabled={regenerating} onClick={() => {
+                  setConfirmAction({ msg: "Regenerate the platform key? You must re-deploy all servers.", fn: async () => {
+                    setRegenerating(true);
                     try {
-                      await downloadFile("/api/admin/ssh-key/download?format=pem", "platform-key.pem");
-                    } catch (e) {
-                      setMessage({ type: "error", text: e instanceof Error ? e.message : "Download failed" });
-                    }
-                  }}
-                >
-                  Download PEM (OpenSSH)
-                </button>
-                <button
-                  type="button"
-                  onClick={async () => {
-                    try {
-                      await downloadFile("/api/admin/ssh-key/download?format=ppk", "platform-key.ppk");
-                    } catch (e) {
-                      setMessage({ type: "error", text: e instanceof Error ? e.message : "Download failed" });
-                    }
-                  }}
-                >
-                  Download PPK (PuTTY)
-                </button>
+                      await api.post("/api/admin/ssh-key/regenerate");
+                      setKeyChangeModalOpen(true);
+                      await fetchSshKey();
+                    } finally { setRegenerating(false); }
+                  }});
+                  setConfirmOpen(true);
+                }}>{regenerating ? "Regenerating…" : "Regenerate"}</button>
+                <button type="button" onClick={() => downloadFile("/api/admin/ssh-key/download?format=pem", "platform-key.pem")}>Download PEM</button>
+                <button type="button" onClick={() => downloadFile("/api/admin/ssh-key/download?format=ppk", "platform-key.ppk")}>Download PPK</button>
               </div>
             </div>
           )}
         </div>
       )}
 
-      {isAdmin && myKey?.uses_own_key && (
-        <p style={{ color: "var(--text-muted)", fontSize: "0.9rem", marginBottom: "1rem", padding: "0.75rem 1rem", background: "rgba(255,255,255,0.04)", borderRadius: 8, border: "1px solid var(--border)" }}>
-          Platform SSH key is hidden while you use your own key. Switch to system-generated key below to manage it and download PEM/PPK.
-        </p>
-      )}
-      <div className="card">
+      <div className="card keys-section">
         <h2 className="card-subtitle">Your SSH key</h2>
-        <p style={{ color: "var(--text-muted)", marginBottom: "0.5rem", fontSize: "0.95rem" }}>
-          {isAdmin ? "Use this key to connect to servers you manage. As admin, you have access to all servers in your tenant." : "Use this key to connect to servers an admin has assigned you to. Your role on each server (admin/sudo or user) is set by the admin."}
-        </p>
         <p style={{ color: "var(--text-muted)", marginBottom: "1rem", fontSize: "0.9rem" }}>
-          You can either <strong>use the system-generated key</strong> (download PEM or PPK below) or <strong>upload your own SSH public key</strong>. If you upload your own, it will replace the system key and be synced to all assigned servers; use your existing private key to connect (no PEM/PPK download).
+          Upload your public key, or use a system-generated key and download PEM/PPK to connect.
         </p>
 
-        <details style={{ marginBottom: "1rem" }}>
-          <summary style={{ cursor: "pointer", fontWeight: 600, fontSize: "0.95rem" }}>Don&apos;t have an SSH key? Create one (Mac &amp; Windows)</summary>
-          <div style={{ marginTop: "0.75rem", fontSize: "0.9rem", color: "var(--text-muted)" }}>
-            <p style={{ marginBottom: "0.5rem" }}><strong>Mac (Terminal)</strong></p>
-            <ul style={{ marginLeft: "1.25rem", marginBottom: "0.75rem" }}>
-              <li>Ed25519 (recommended): <code>ssh-keygen -t ed25519 -C "your_email@example.com"</code></li>
-              <li>Or RSA: <code>ssh-keygen -t rsa -b 4096 -C "your_email@example.com"</code></li>
-              <li>Press Enter to accept the default path (<code>~/.ssh/id_ed25519</code> or <code>~/.ssh/id_rsa</code>). Optionally set a passphrase.</li>
-              <li>Your public key is in <code>~/.ssh/id_ed25519.pub</code> or <code>~/.ssh/id_rsa.pub</code>. Open it and copy the whole line, then paste it below.</li>
-            </ul>
-            <p style={{ marginBottom: "0.5rem" }}><strong>Windows (PowerShell or Command Prompt)</strong></p>
-            <ul style={{ marginLeft: "1.25rem", marginBottom: "0.75rem" }}>
-              <li>If OpenSSH is installed (Windows 10/11): run <code>ssh-keygen -t ed25519 -C "your_email@example.com"</code> (or <code>-t rsa -b 4096</code>).</li>
-              <li>Default path is <code>%USERPROFILE%\.ssh\id_ed25519</code> or <code>id_rsa</code>. Press Enter for default, optionally set a passphrase.</li>
-              <li>Public key: <code>%USERPROFILE%\.ssh\id_ed25519.pub</code> or <code>id_rsa.pub</code>. Open in Notepad and copy the whole line.</li>
-            </ul>
-            <p style={{ marginBottom: "0.5rem" }}><strong>Windows (PuTTYgen, if you prefer)</strong></p>
-            <ul style={{ marginLeft: "1.25rem", marginBottom: "0.75rem" }}>
-              <li>Download PuTTYgen, open it → Key → Generate. Move the mouse to add randomness, then set a passphrase if you want.</li>
-              <li>Copy the &quot;Public key for pasting into OpenSSH authorized_keys file&quot; and paste it below. Save the private key as a .ppk for PuTTY.</li>
-            </ul>
-          </div>
-        </details>
-
-        <details style={{ marginBottom: "1rem" }}>
-          <summary style={{ cursor: "pointer", fontWeight: 600, fontSize: "0.95rem" }}>How to use your key (finding it &amp; connecting)</summary>
-          <div style={{ marginTop: "0.75rem", fontSize: "0.9rem", color: "var(--text-muted)" }}>
-            <p style={{ marginBottom: "0.5rem" }}><strong>Finding your public key</strong></p>
-            <ul style={{ marginLeft: "1.25rem", marginBottom: "0.75rem" }}>
-              <li><strong>Mac / Linux:</strong> Usually <code>~/.ssh/id_rsa.pub</code> or <code>~/.ssh/id_ed25519.pub</code>. Open in a text editor and copy the whole line.</li>
-              <li><strong>Windows (OpenSSH):</strong> <code>%USERPROFILE%\.ssh\id_rsa.pub</code> or <code>id_ed25519.pub</code>. Copy the whole line.</li>
-              <li><strong>Windows (PuTTY):</strong> Use PuTTYgen: load your private key, then copy the &quot;Public key for pasting&quot; line.</li>
-            </ul>
-            <p style={{ marginBottom: "0.5rem" }}><strong>Connecting with your key</strong></p>
-            <ul style={{ marginLeft: "1.25rem" }}>
-              <li><strong>Mac / Linux / Windows OpenSSH:</strong> <code>ssh -i ~/.ssh/id_rsa user@host</code> (or <code>id_ed25519</code>). Use the path to your <em>private</em> key.</li>
-              <li><strong>Windows (PuTTY):</strong> In PuTTY, Connection → SSH → Auth → Private key file, browse to your .ppk. Then connect as usual.</li>
-            </ul>
-          </div>
-        </details>
-
-        <div style={{ marginBottom: "1.5rem" }}>
-          <h3 style={{ fontSize: "1rem", marginBottom: "0.5rem" }}>Use your own SSH key</h3>
-          {myKey?.uses_own_key && (
-            <p style={{ color: "var(--text-muted)", fontSize: "0.9rem", marginBottom: "0.5rem" }}>
-              You are using your own key. Update it below or switch to system-generated key to use PEM/PPK downloads.
-            </p>
-          )}
-          <p style={{ color: "var(--text-muted)", fontSize: "0.9rem", marginBottom: "0.5rem" }}>Paste your public key (one line, e.g. <code>ssh-rsa AAAA... you@host</code>):</p>
+        <div className="keys-upload-box">
+          <label style={{ display: "block", fontWeight: 500, marginBottom: "0.5rem" }}>Upload your public key</label>
+          <p style={{ fontSize: "0.85rem", color: "var(--text-muted)", marginBottom: "0.5rem" }}>Paste one line (e.g. ssh-ed25519 AAAA... you@host)</p>
           <textarea
             value={ownKeyInput}
             onChange={(e) => setOwnKeyInput(e.target.value)}
-            placeholder="ssh-rsa AAAA... or ssh-ed25519 AAAA..."
-            rows={3}
-            style={{ width: "100%", maxWidth: "600px", fontFamily: "monospace", fontSize: "0.85rem", padding: "0.5rem", borderRadius: "6px", border: "1px solid var(--border)" }}
+            placeholder="ssh-ed25519 AAAA... or ssh-rsa AAAA..."
+            rows={2}
+            style={{ width: "100%", fontFamily: "monospace", fontSize: "0.85rem", padding: "0.6rem", borderRadius: 8, border: "1px solid var(--border)" }}
           />
-          <div style={{ marginTop: "0.5rem" }}>
-            <button
-              type="button"
-              className="primary"
-              disabled={savingOwnKey || !ownKeyInput.trim()}
-                onClick={async () => {
-                  setSavingOwnKey(true);
-                  setMessage(null);
-                  try {
-                    const line = ownKeyInput.trim().split("\n")[0];
-                    const res = await api.post<{ message?: string; sync_results?: { server_name: string; success: boolean; error?: string }[] }>(
-                      "/api/users/me/ssh-key/public",
-                      { public_key: line }
-                    );
-                    setOwnKeyInput("");
-                    await fetchMyKey();
-                    const sync = res?.sync_results || [];
-                    const ok = sync.filter((r) => r.success).length;
-                    const fail = sync.filter((r) => !r.success);
-                    const msg =
-                      fail.length === 0
-                        ? `Your SSH public key has been saved. Synced to ${ok} server(s).`
-                        : fail.length === sync.length
-                          ? `Key saved but sync failed: ${fail.map((r) => r.error).join("; ")}`
-                          : `Key saved. ${ok} synced, ${fail.length} failed: ${fail.map((r) => r.error).join("; ")}`;
-                    setMessage({ type: fail.length === sync.length ? "error" : "success", text: msg });
-                  } catch (e: unknown) {
-                    const msg = e && typeof e === "object" && "detail" in e ? String((e as { detail: unknown }).detail) : (e instanceof Error ? e.message : "Failed to save key");
-                    setMessage({ type: "error", text: msg });
-                  } finally {
-                    setSavingOwnKey(false);
-                  }
-                }}
-            >
-              {savingOwnKey ? "Saving…" : "Save my public key"}
-            </button>
-          </div>
+          <button type="button" className="primary" disabled={savingOwnKey || !ownKeyInput.trim()} onClick={handleUploadKey} style={{ marginTop: "0.5rem" }}>
+            {savingOwnKey ? "Saving…" : "Upload key"}
+          </button>
         </div>
 
-        {myKeyLoading ? (
-          <Spinner />
-        ) : !myKey?.has_key ? (
-          <div>
-            <p style={{ color: "var(--text-muted)", fontSize: "0.9rem", marginBottom: "1rem" }}>
-              You don’t have an SSH key yet. Upload your own public key above, or generate a system key below.
-            </p>
-            <button
-              type="button"
-              className="primary"
-              disabled={userKeyRegenerating}
-              onClick={() => {
-                setConfirmAction({
-                  msg: "Generate a system SSH key? You will be able to download PEM or PPK to connect to servers.",
-                  fn: async () => {
-                    setUserKeyRegenerating(true);
-                    setMessage(null);
-                    try {
-                      const res = await api.post<{ message?: string; sync_results?: { success: boolean; error?: string }[] }>(
-                        "/api/users/me/ssh-key/regenerate"
-                      );
-                      toast("success", "System key generated. Download PEM or PPK below.");
-                      await fetchMyKey();
-                      const sync = res?.sync_results || [];
-                      const fail = sync.filter((r) => !r.success);
-                      if (fail.length > 0) {
-                        setMessage({ type: "error", text: `Sync failed on ${fail.length} server(s): ${fail.map((r) => r.error).join("; ")}` });
-                      }
-                    } catch (e) {
-                      setMessage({ type: "error", text: e instanceof Error ? e.message : "Failed to generate key" });
-                    } finally {
-                      setUserKeyRegenerating(false);
-                    }
-                  },
-                });
-                setConfirmOpen(true);
-              }}
-            >
+        <div className="keys-system-box" style={{ marginTop: "1.5rem" }}>
+          <label style={{ display: "block", fontWeight: 500, marginBottom: "0.5rem" }}>System-generated key</label>
+          {myKeyLoading ? <Spinner /> : !myKey?.has_key ? (
+            <p style={{ color: "var(--text-muted)", fontSize: "0.9rem", marginBottom: "0.75rem" }}>No key yet. Upload above or generate below.</p>
+          ) : (
+            <div>
+              <p style={{ fontSize: "0.9rem", color: "var(--text-muted)", marginBottom: "0.5rem" }}>
+                Current: {myKey.uses_own_key ? "Your uploaded key" : "System key"}. {myKey.fingerprint && <>Fingerprint: <code>{truncateFingerprint(myKey.fingerprint)}</code></>}
+              </p>
+              {myKey.public_key && (
+                <p style={{ fontSize: "0.8rem", color: "var(--text-muted)", fontFamily: "monospace", wordBreak: "break-all" }}>
+                  {truncateKey(myKey.public_key)}
+                </p>
+              )}
+              <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap", marginTop: "0.75rem" }}>
+                {myKey.uses_own_key ? (
+                  <button type="button" disabled={userKeyRegenerating} onClick={() => {
+                    setConfirmAction({ msg: "Switch to system-generated key? You can download PEM/PPK.", fn: async () => {
+                      setUserKeyRegenerating(true);
+                      try {
+                        await api.post("/api/users/me/ssh-key/regenerate");
+                        setKeyChangeModalOpen(true);
+                        await fetchMyKey();
+                      } finally { setUserKeyRegenerating(false); }
+                    }});
+                    setConfirmOpen(true);
+                  }}>{userKeyRegenerating ? "Switching…" : "Switch to system key"}</button>
+                ) : (
+                  <>
+                    <button type="button" disabled={userKeyRegenerating} onClick={() => {
+                      setConfirmAction({ msg: "Regenerate key? Old key will stop working.", fn: async () => {
+                        setUserKeyRegenerating(true);
+                        try {
+                          await api.post("/api/users/me/ssh-key/regenerate");
+                          setKeyChangeModalOpen(true);
+                          await fetchMyKey();
+                        } finally { setUserKeyRegenerating(false); }
+                      }});
+                      setConfirmOpen(true);
+                    }}>{userKeyRegenerating ? "Regenerating…" : "Regenerate"}</button>
+                    <button type="button" onClick={() => downloadFile("/api/users/me/ssh-key/download?format=pem", "sshcontrol-key.pem")}>Download PEM</button>
+                    <button type="button" onClick={() => downloadFile("/api/users/me/ssh-key/download?format=ppk", "sshcontrol-key.ppk")}>Download PPK</button>
+                  </>
+                )}
+              </div>
+            </div>
+          )}
+          {!myKey?.has_key && (
+            <button type="button" className="primary" disabled={userKeyRegenerating} onClick={() => {
+              setConfirmAction({ msg: "Generate a system key? You can download PEM or PPK.", fn: async () => {
+                setUserKeyRegenerating(true);
+                try {
+                  await api.post("/api/users/me/ssh-key/regenerate");
+                  setKeyChangeModalOpen(true);
+                  await fetchMyKey();
+                } finally { setUserKeyRegenerating(false); }
+              }});
+              setConfirmOpen(true);
+            }}>
               {userKeyRegenerating ? "Generating…" : "Generate system key"}
             </button>
-          </div>
-        ) : (
-          <div>
-            <p style={{ marginBottom: "0.5rem", fontSize: "0.9rem", color: "var(--text-muted)" }}>
-              Current key: {myKey.uses_own_key ? "Your uploaded public key" : "System-generated key (PEM/PPK below)"}.
-              {myKey.fingerprint && <> Fingerprint: <code>{myKey.fingerprint}</code></>}
-            </p>
-            {myKey.public_key && (
-              <pre className="key-block" style={{ fontSize: "0.8rem", overflow: "auto", marginBottom: "1rem", padding: "0.75rem", background: "var(--bg-subtle)", borderRadius: "6px" }}>
-                {myKey.public_key}
-              </pre>
-            )}
-            <div style={{ display: "flex", gap: "0.75rem", flexWrap: "wrap" }}>
-              {myKey.uses_own_key ? (
-                <button
-                  type="button"
-                  disabled={userKeyRegenerating}
-                  onClick={() => {
-                    setConfirmAction({
-                      msg: "Switch back to a system-generated key? You will get a new key and can download PEM/PPK. Servers will be updated within a few minutes. Continue?",
-                      fn: async () => {
-                        setUserKeyRegenerating(true);
-                        setMessage(null);
-                        try {
-                          const res = await api.post<{ message?: string; sync_results?: { success: boolean; error?: string }[] }>(
-                            "/api/users/me/ssh-key/regenerate"
-                          );
-                          toast("success", "Switched to system key. Download PEM or PPK below.");
-                          await fetchMyKey();
-                          const sync = res?.sync_results || [];
-                          const fail = sync.filter((r) => !r.success);
-                          if (fail.length > 0) {
-                            setMessage({ type: "error", text: `Sync failed on ${fail.length} server(s): ${fail.map((r) => r.error).join("; ")}` });
-                          }
-                        } catch (e) {
-                          setMessage({ type: "error", text: e instanceof Error ? e.message : "Failed to switch key" });
-                        } finally {
-                          setUserKeyRegenerating(false);
-                        }
-                      },
-                    });
-                    setConfirmOpen(true);
-                  }}
-                >
-                  {userKeyRegenerating ? "Switching…" : "Switch to system-generated key"}
-                </button>
-              ) : (
-                <>
-                  <button
-                    type="button"
-                    disabled={userKeyRegenerating}
-                    onClick={() => {
-                      setConfirmAction({
-                        msg: "Regenerate your SSH key? The old key will stop working. You must re-download PEM/PPK and save them. Servers will get the new key within a few minutes. Continue?",
-                        fn: async () => {
-                          setUserKeyRegenerating(true);
-                          setMessage(null);
-                          try {
-                            const res = await api.post<{ message?: string; sync_results?: { success: boolean; error?: string }[] }>(
-                              "/api/users/me/ssh-key/regenerate"
-                            );
-                            toast("success", "SSH key regenerated. Re-download PEM or PPK.");
-                            await fetchMyKey();
-                            const sync = res?.sync_results || [];
-                            const fail = sync.filter((r) => !r.success);
-                            if (fail.length > 0) {
-                              setMessage({ type: "error", text: `Sync failed on ${fail.length} server(s): ${fail.map((r) => r.error).join("; ")}` });
-                            }
-                          } catch (e) {
-                            setMessage({ type: "error", text: e instanceof Error ? e.message : "Failed to regenerate key" });
-                          } finally {
-                            setUserKeyRegenerating(false);
-                          }
-                        },
-                      });
-                      setConfirmOpen(true);
-                    }}
-                  >
-                    {userKeyRegenerating ? "Regenerating…" : "Regenerate key"}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={async () => {
-                      try {
-                        await downloadFile("/api/users/me/ssh-key/download?format=pem", "sshcontrol-key.pem");
-                      } catch (e) {
-                        setMessage({ type: "error", text: e instanceof Error ? e.message : "Download failed" });
-                      }
-                    }}
-                  >
-                    Download PEM (OpenSSH)
-                  </button>
-                  <button
-                    type="button"
-                    onClick={async () => {
-                      try {
-                        await downloadFile("/api/users/me/ssh-key/download?format=ppk", "sshcontrol-key.ppk");
-                      } catch (e) {
-                        setMessage({ type: "error", text: e instanceof Error ? e.message : "Download failed" });
-                      }
-                    }}
-                  >
-                    Download PPK (PuTTY)
-                  </button>
-                </>
-              )}
-            </div>
-          </div>
-        )}
+          )}
+        </div>
       </div>
 
-      {message && (
-        <p className={message.type === "error" ? "error-msg" : "success-msg"} style={{ marginTop: "1rem" }}>
-          {message.text}
-        </p>
-      )}
-      <ConfirmModal
-        open={confirmOpen}
-        title="Confirm"
-        message={confirmAction?.msg || ""}
-        confirmLabel="Continue"
-        onConfirm={async () => {
-          setConfirmOpen(false);
-          if (confirmAction) await confirmAction.fn();
-        }}
-        onCancel={() => setConfirmOpen(false)}
-      />
+      {message && <p className={message.type === "error" ? "error-msg" : "success-msg"}>{message.text}</p>}
+      <ConfirmModal open={confirmOpen} title="Confirm" message={confirmAction?.msg || ""} confirmLabel="Continue" onConfirm={async () => { setConfirmOpen(false); if (confirmAction) await confirmAction.fn(); }} onCancel={() => setConfirmOpen(false)} />
     </>
   );
 
-  if (embedded) {
-    return <div className="profile-section">{content}</div>;
-  }
+  if (embedded) return <div className="profile-section">{content}</div>;
   return <div className="container app-page">{content}</div>;
 }

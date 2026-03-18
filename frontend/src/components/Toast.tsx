@@ -1,4 +1,5 @@
 import { createContext, useCallback, useContext, useState, useRef, type ReactNode } from "react";
+import SuccessConfirmModal from "./SuccessConfirmModal";
 
 type ToastType = "success" | "error" | "info";
 
@@ -10,9 +11,10 @@ interface ToastItem {
 
 interface ToastCtx {
   toast: (type: ToastType, message: string) => void;
+  showSuccessModal: (message?: string, title?: string) => void;
 }
 
-const Ctx = createContext<ToastCtx>({ toast: () => {} });
+const Ctx = createContext<ToastCtx>({ toast: () => {}, showSuccessModal: () => {} });
 
 export function useToast() {
   return useContext(Ctx);
@@ -32,6 +34,7 @@ const ICONS: Record<ToastType, ReactNode> = {
 
 export function ToastProvider({ children }: { children: ReactNode }) {
   const [items, setItems] = useState<ToastItem[]>([]);
+  const [successModal, setSuccessModal] = useState<{ open: boolean; message?: string; title?: string }>({ open: false });
   const counter = useRef(0);
 
   const toast = useCallback((type: ToastType, message: string) => {
@@ -42,12 +45,16 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     }, 4500);
   }, []);
 
+  const showSuccessModal = useCallback((message?: string, title?: string) => {
+    setSuccessModal({ open: true, message, title });
+  }, []);
+
   const dismiss = useCallback((id: number) => {
     setItems((prev) => prev.filter((t) => t.id !== id));
   }, []);
 
   return (
-    <Ctx.Provider value={{ toast }}>
+    <Ctx.Provider value={{ toast, showSuccessModal }}>
       {children}
       <div className="toast-container" aria-live="polite">
         {items.map((t) => (
@@ -60,6 +67,12 @@ export function ToastProvider({ children }: { children: ReactNode }) {
           </div>
         ))}
       </div>
+      <SuccessConfirmModal
+        open={successModal.open}
+        title={successModal.title}
+        message={successModal.message}
+        onClose={() => setSuccessModal((s) => ({ ...s, open: false }))}
+      />
     </Ctx.Provider>
   );
 }

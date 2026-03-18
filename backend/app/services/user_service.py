@@ -86,12 +86,21 @@ class UserService:
         skip: int = 0,
         limit: int = 50,
         tenant_id: str | None = None,
+        exclude_admins: bool = False,
     ) -> tuple[list[User], int]:
         base = select(User)
         count_base = select(func.count()).select_from(User)
         if tenant_id:
             base = base.where(User.tenant_id == tenant_id)
             count_base = count_base.where(User.tenant_id == tenant_id)
+        if exclude_admins:
+            admin_role_ids = select(Role.id).where(Role.name == "admin")
+            admin_filter = (
+                (User.is_superuser == False)  # noqa: E712
+                & ~User.id.in_(select(user_roles.c.user_id).where(user_roles.c.role_id.in_(admin_role_ids)))
+            )
+            base = base.where(admin_filter)
+            count_base = count_base.where(admin_filter)
         count_result = await db.execute(count_base)
         total = count_result.scalar() or 0
         result = await db.execute(
@@ -105,11 +114,17 @@ class UserService:
         return users, total
 
     @staticmethod
-    async def get_stats(db: AsyncSession, tenant_id: str | None = None) -> dict:
-        """Return { total, active, inactive } user counts scoped to tenant."""
+    async def get_stats(db: AsyncSession, tenant_id: str | None = None, exclude_admins: bool = False) -> dict:
+        """Return { total, active, inactive } user counts scoped to tenant. exclude_admins=True for dashboard (don't count admin)."""
         base = select(func.count()).select_from(User)
         if tenant_id:
             base = base.where(User.tenant_id == tenant_id)
+        if exclude_admins:
+            admin_role_ids = select(Role.id).where(Role.name == "admin")
+            base = base.where(
+                User.is_superuser == False,  # noqa: E712
+                ~User.id.in_(select(user_roles.c.user_id).where(user_roles.c.role_id.in_(admin_role_ids))),
+            )
         total_r = await db.execute(base)
         total = total_r.scalar() or 0
         active_base = base.where(User.is_active == True)  # noqa: E712
@@ -121,10 +136,12 @@ class UserService:
     async def get_online_users(db: AsyncSession, within_minutes: int = 5, tenant_id: str | None = None) -> list[dict]:
         """Return list of users with last_seen_at within the last N minutes. Includes connected_to: servers where they have an active SSH session (from server session reports)."""
         since = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=within_minutes)
+        admin_role_ids = select(Role.id).where(Role.name == "admin")
         q = (
             select(User)
-            .options(selectinload(User.server_accesses))
             .where(User.is_active == True, User.last_seen_at >= since)  # noqa: E712
+            .where(User.is_superuser == False)  # noqa: E712
+            .where(~User.id.in_(select(user_roles.c.user_id).where(user_roles.c.role_id.in_(admin_role_ids))))
             .order_by(User.last_seen_at.desc().nulls_last())
         )
         if tenant_id:
@@ -143,7 +160,8 @@ class UserService:
             if u.is_superuser:
                 user_servers = list(all_servers.values())
             else:
-                user_server_ids = {sa.server_id for sa in (u.server_accesses or [])}
+                eff_access = await server_service.get_user_effective_server_access(db, str(u.id), tenant_id=u.tenant_id)
+                user_server_ids = {a["server_id"] for a in eff_access}
                 user_servers = [all_servers[sid] for sid in user_server_ids if sid in all_servers]
             linux_name = server_service._linux_username(u.username or "")
             connected_to = []

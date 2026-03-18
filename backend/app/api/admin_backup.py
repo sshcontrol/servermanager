@@ -1,5 +1,6 @@
 """Admin backup: full DB export (encrypted), import, and history CSV export."""
 
+import asyncio
 import csv
 import io
 from datetime import datetime, timezone
@@ -43,7 +44,7 @@ async def export_backup(
     except Exception:
         pass
     try:
-        data = backup_service.export_backup(str(password))
+        data = await asyncio.to_thread(backup_service.export_backup, str(password))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     filename = f"servermanager-backup-{datetime.now(timezone.utc).strftime('%Y-%m-%d-%H%M')}.encrypted"
@@ -88,10 +89,16 @@ async def import_backup(
         )
     except Exception:
         pass
+    await db.flush()
     try:
-        backup_service.import_backup(data, password)
+        await asyncio.to_thread(backup_service.import_backup, data, password)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Restore failed: {str(e)}",
+        ) from e
     return {"message": "Database restored from backup."}
 
 

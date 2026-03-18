@@ -21,8 +21,10 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 
-def _user_to_response(u: User) -> UserResponse:
-    return UserResponse(
+def _user_to_response(
+    u: User, effective_access: list[dict] | None = None
+) -> UserResponse:
+    resp = UserResponse(
         id=u.id,
         email=u.email,
         username=u.username,
@@ -41,6 +43,11 @@ def _user_to_response(u: User) -> UserResponse:
             for a in (getattr(u, "server_accesses", None) or [])
         ],
     )
+    if effective_access is not None:
+        resp.effective_server_access = [
+            ServerAccessItem(server_id=a["server_id"], role=a["role"]) for a in effective_access
+        ]
+    return resp
 
 
 @router.get("/stats")
@@ -48,8 +55,8 @@ async def get_user_stats(
     db: Annotated[AsyncSession, Depends(get_db)],
     current_user: Annotated[User, Depends(RequireUsersRead)],
 ):
-    """Return { total, active, inactive } for dashboard (admin)."""
-    return await UserService.get_stats(db, tenant_id=current_user.tenant_id)
+    """Return { total, active, inactive } for dashboard (admin). Excludes admin from counts."""
+    return await UserService.get_stats(db, tenant_id=current_user.tenant_id, exclude_admins=True)
 
 
 @router.get("", response_model=UserListResponse)
@@ -58,9 +65,15 @@ async def list_users(
     current_user: Annotated[User, Depends(RequireUsersRead)],
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=500),
+    exclude_admins: bool = Query(False, description="Exclude is_superuser and admin role from list (e.g. for Modify Users)"),
 ):
-    users, total = await UserService.list_users(db, skip=skip, limit=limit, tenant_id=current_user.tenant_id)
-    return UserListResponse(users=[_user_to_response(u) for u in users], total=total)
+    users, total = await UserService.list_users(db, skip=skip, limit=limit, tenant_id=current_user.tenant_id, exclude_admins=exclude_admins)
+    tenant_id = current_user.tenant_id
+    result = []
+    for u in users:
+        eff = await server_service.get_user_effective_server_access(db, str(u.id), tenant_id=tenant_id)
+        result.append(_user_to_response(u, effective_access=eff))
+    return UserListResponse(users=result, total=total)
 
 
 @router.get("/me", response_model=UserResponse)
@@ -295,7 +308,8 @@ async def get_user(
     user = await UserService.get_user(db, user_id)
     if not user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
-    return _user_to_response(user)
+    eff = await server_service.get_user_effective_server_access(db, user_id, tenant_id=current_user.tenant_id)
+    return _user_to_response(user, effective_access=eff)
 
 
 @router.post("", status_code=status.HTTP_201_CREATED)

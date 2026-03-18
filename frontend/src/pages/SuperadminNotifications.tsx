@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../api/client";
+import Toggle from "../components/Toggle";
 
 type Recipient = {
   id: string;
@@ -134,12 +135,7 @@ export default function SuperadminNotifications() {
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem" }}>
           <h2 className="card-subtitle" style={{ margin: 0 }}>Recipients</h2>
           <label style={{ display: "flex", alignItems: "center", gap: "0.5rem", margin: 0 }}>
-            <input
-              type="checkbox"
-              checked={adminsOnly}
-              onChange={(e) => setAdminsOnly(e.target.checked)}
-              style={{ width: "auto", accentColor: "var(--accent)" }}
-            />
+            <Toggle checked={adminsOnly} onChange={setAdminsOnly} />
             <span style={{ fontSize: "0.9rem" }}>Admins only</span>
           </label>
         </div>
@@ -181,12 +177,7 @@ export default function SuperadminNotifications() {
                     background: selectedIds.has(r.id) ? "rgba(64, 224, 208, 0.1)" : "transparent",
                   }}
                 >
-                  <input
-                    type="checkbox"
-                    checked={selectedIds.has(r.id)}
-                    onChange={() => toggleSelect(r.id)}
-                    style={{ width: "auto", accentColor: "var(--accent)" }}
-                  />
+                  <Toggle checked={selectedIds.has(r.id)} onChange={() => toggleSelect(r.id)} />
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontWeight: 600, color: "var(--text)" }}>
                       {r.full_name || r.username}

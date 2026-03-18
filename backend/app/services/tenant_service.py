@@ -223,10 +223,16 @@ class TenantService:
         }
 
     @staticmethod
-    async def count_tenant_users(db: AsyncSession, tenant_id: str) -> int:
-        result = await db.execute(
-            select(func.count(User.id)).where(User.tenant_id == tenant_id, User.is_active == True)  # noqa: E712
-        )
+    async def count_tenant_users(db: AsyncSession, tenant_id: str, exclude_admin: bool = False) -> int:
+        """Count active tenant users. If exclude_admin=True, do not count is_superuser or admin role (for plan limits)."""
+        q = select(func.count(User.id)).where(User.tenant_id == tenant_id, User.is_active == True)  # noqa: E712
+        if exclude_admin:
+            admin_role_ids = select(Role.id).where(Role.name == "admin")
+            q = q.where(
+                User.is_superuser == False,  # noqa: E712
+                ~User.id.in_(select(user_roles.c.user_id).where(user_roles.c.role_id.in_(admin_role_ids))),
+            )
+        result = await db.execute(q)
         return result.scalar_one()
 
     @staticmethod
@@ -261,7 +267,7 @@ class TenantService:
     @staticmethod
     async def check_user_limit(db: AsyncSession, tenant_id: str, include_pending_invitations: bool = False) -> None:
         limits = await TenantService.get_plan_limits(db, tenant_id)
-        current = await TenantService.count_tenant_users(db, tenant_id)
+        current = await TenantService.count_tenant_users(db, tenant_id, exclude_admin=True)
         if include_pending_invitations:
             pending = await TenantService.count_tenant_pending_invitations(db, tenant_id)
             current += pending

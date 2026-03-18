@@ -1,7 +1,19 @@
 import os
+from pathlib import Path
+
 from pydantic_settings import BaseSettings
 from pydantic import field_validator
 from functools import lru_cache
+
+# Resolve .env path: prefer project root (../.env) when running from backend/, then backend/.env
+_CONFIG_DIR = Path(__file__).resolve().parent
+_BACKEND_ROOT = _CONFIG_DIR.parent
+_PROJECT_ROOT = _BACKEND_ROOT.parent
+_ENV_CANDIDATES = [
+    _PROJECT_ROOT / ".env",
+    _BACKEND_ROOT / ".env",
+    Path(".env"),
+]
 
 
 class Settings(BaseSettings):
@@ -59,7 +71,7 @@ class Settings(BaseSettings):
         return f"postgresql://{user}:{password}@{host}:{port}/{dbname}"
 
     model_config = {
-        "env_file": ".env",
+        "env_file": [str(p) for p in _ENV_CANDIDATES if p.is_file()] or ".env",
         "env_file_encoding": "utf-8",
         "extra": "ignore",
     }

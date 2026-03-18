@@ -18,13 +18,21 @@ export default function NotificationDropdown() {
   const [loading, setLoading] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
+  const prevUnreadRef = useRef<number | null>(null);
+
   const fetchNotifications = async () => {
     try {
       const res = await api.get<{ notifications: NotificationItem[]; unread_count: number }>(
         "/api/notifications/me?limit=20"
       );
+      const newUnread = res.unread_count;
+      if (prevUnreadRef.current !== null && newUnread > prevUnreadRef.current) {
+        window.location.reload();
+        return;
+      }
+      prevUnreadRef.current = newUnread;
       setNotifications(res.notifications);
-      setUnreadCount(res.unread_count);
+      setUnreadCount(newUnread);
     } catch {
       setNotifications([]);
       setUnreadCount(0);
@@ -33,7 +41,7 @@ export default function NotificationDropdown() {
 
   useEffect(() => {
     fetchNotifications();
-    const interval = setInterval(fetchNotifications, 60000);
+    const interval = setInterval(fetchNotifications, 30000);
     return () => clearInterval(interval);
   }, []);
 

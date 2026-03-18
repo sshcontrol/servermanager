@@ -1,39 +1,34 @@
-/* SSHCONTROL – Professional UI with Persian-inspired palette */
-/* Main: #40E0D0 (turquoise) | Font: #F5F5DC (beige) */
+/* SSHCONTROL – Cool Slate + Cyan palette */
+/* Professional, enterprise-ready dark theme */
 
-@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
 
 :root {
-  /* Primary & text (user-specified) */
-  --primary: #40E0D0;
-  --primary-hover: #2bc4b8;
-  --primary-dim: #1a9e92;
-  --text: #F5F5DC;
-  --text-muted: #d4d4b8;
+  /* Primary – Cyan */
+  --primary: #06b6d4;
+  --primary-hover: #22d3ee;
+  --primary-dim: #0891b2;
+  --primary-on: #0f172a;
 
-  /* Persian-inspired palette */
-  --persian-blue: #1B4F72;
-  --persian-blue-light: #2E86AB;
-  --persian-gold: #C9A227;
-  --persian-gold-soft: #D4A574;
-  --persian-teal: #0D3B4C;
-  --persian-terracotta: #B55233;
-  --persian-ivory: #F5F5DC;
+  /* Text */
+  --text: #f8fafc;
+  --text-muted: #94a3b8;
 
-  /* Surfaces & borders */
-  --bg: #0a1628;
-  --bg-elevated: #0D2137;
-  --surface: #122a42;
-  --surface-hover: #1a3654;
-  --border: #1B4F72;
-  --border-light: rgba(64, 224, 208, 0.2);
+  /* Surfaces & borders – Slate */
+  --bg: #0f172a;
+  --bg-elevated: #1e293b;
+  --surface: #1e293b;
+  --surface-hover: #334155;
+  --border: #334155;
+  --border-light: rgba(6, 182, 212, 0.25);
 
   /* Semantic */
-  --danger: #e74c3c;
-  --success: #27ae60;
-  --warning: var(--persian-gold);
+  --danger: #ef4444;
+  --success: #22c55e;
+  --warning: #f59e0b;
+  --accent: var(--primary);
 
-  font-family: 'Outfit', -apple-system, BlinkMacSystemFont, sans-serif;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   line-height: 1.6;
   color: var(--text);
   background: var(--bg);
@@ -89,13 +84,13 @@ button:active {
 button.primary {
   background: var(--primary);
   border-color: var(--primary);
-  color: var(--persian-teal);
+  color: var(--primary-on);
   font-weight: 600;
 }
 button.primary:hover {
   background: var(--primary-hover);
   border-color: var(--primary-hover);
-  color: var(--persian-teal);
+  color: var(--primary-on);
 }
 button.btn-link, .btn-link {
   background: transparent;
@@ -145,7 +140,7 @@ code {
 input:focus, select:focus, textarea:focus {
   outline: none;
   border-color: var(--primary);
-  box-shadow: 0 0 0 2px rgba(64, 224, 208, 0.2);
+  box-shadow: 0 0 0 2px rgba(6, 182, 212, 0.25);
 }
 
 .card {
@@ -324,6 +319,10 @@ tbody tr:hover {
   background: var(--warning);
   color: var(--bg);
 }
+.badge-info {
+  background: var(--primary);
+  color: var(--bg);
+}
 
 .breadcrumb {
   font-size: 0.9rem;
@@ -374,6 +373,62 @@ tbody tr:hover {
   flex-shrink: 0;
   margin: 0;
   cursor: pointer;
+}
+
+/* Toggle switch (replacement for checkboxes) */
+.toggle-switch {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.toggle-switch input[type="checkbox"] {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+  margin: 0;
+  pointer-events: none;
+}
+.toggle-slider {
+  position: relative;
+  display: block;
+  width: 44px;
+  height: 24px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.2);
+  border: none;
+  transition: background 0.2s;
+}
+.toggle-slider::before {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+  transition: left 0.2s;
+}
+.toggle-switch input:checked + .toggle-slider {
+  background: var(--primary);
+}
+.toggle-switch input:checked + .toggle-slider::before {
+  left: 22px;
+}
+.toggle-switch input:focus + .toggle-slider {
+  box-shadow: 0 0 0 2px rgba(6, 182, 212, 0.3);
+}
+.toggle-switch input:disabled + .toggle-slider {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.toggle-switch input:disabled ~ *,
+.toggle-switch input:disabled {
+  cursor: not-allowed;
 }
 .form-check-desc {
   color: var(--text-muted);
@@ -576,7 +631,7 @@ tbody tr:hover {
   font-weight: 700;
   line-height: 16px;
   text-align: center;
-  color: var(--persian-teal);
+  color: var(--primary-on);
   background: var(--primary);
   border-radius: 8px;
 }
@@ -1005,8 +1060,8 @@ tbody tr:hover {
   min-width: 0;
 }
 .dashboard-page .dashboard-panel {
-  background: rgba(18, 42, 66, 0.35);
-  border: 1px solid rgba(64, 224, 208, 0.08);
+  background: rgba(13, 27, 42, 0.6);
+  border: 1px solid rgba(30, 58, 90, 0.5);
   border-radius: 12px;
   padding: 1.5rem 1.75rem;
 }
@@ -1212,6 +1267,79 @@ tbody tr:hover {
 .dashboard-admin-stat-label {
   font-size: 0.85rem;
   color: var(--text-muted);
+}
+
+/* Plan card on dashboard */
+.dashboard-plan-card {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.5rem;
+  padding: 1rem 1.25rem;
+  margin-bottom: 1.5rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+.dashboard-plan-urgent {
+  border-color: var(--warning);
+  background: rgba(245, 158, 11, 0.1);
+}
+.dashboard-plan-expired {
+  border-color: var(--danger);
+  background: rgba(239, 68, 68, 0.1);
+}
+.dashboard-plan-label {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.dashboard-plan-info {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+.dashboard-plan-name {
+  font-weight: 600;
+  color: var(--text);
+}
+.dashboard-plan-days {
+  font-size: 0.9rem;
+  color: var(--text-muted);
+}
+.dashboard-plan-urgent .dashboard-plan-days,
+.dashboard-plan-expired .dashboard-plan-days {
+  color: var(--danger);
+  font-weight: 500;
+}
+.dashboard-plan-renew {
+  padding: 0.4rem 1rem;
+  font-size: 0.9rem;
+  font-weight: 500;
+  background: var(--danger);
+  color: #fff;
+  border-radius: 8px;
+  text-decoration: none;
+  transition: opacity 0.2s;
+}
+.dashboard-plan-renew:hover {
+  opacity: 0.9;
+  color: #fff;
+}
+
+/* Keys page – upload and system key boxes */
+.keys-section {
+  margin-bottom: 1.5rem;
+}
+.keys-upload-box {
+  padding: 1rem 1.25rem;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid var(--border);
+  border-radius: 10px;
 }
 
 /* Add server – OS cards and modal */
@@ -1540,6 +1668,24 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
   justify-content: flex-end;
   gap: 0.65rem;
 }
+.success-confirm-dialog {
+  text-align: center;
+}
+.success-confirm-icon {
+  width: 56px;
+  height: 56px;
+  margin: 0 auto 1rem;
+  border-radius: 50%;
+  background: var(--success);
+  color: var(--bg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.success-confirm-icon svg {
+  width: 32px;
+  height: 32px;
+}
 @keyframes confirm-fade {
   from { opacity: 0; }
   to { opacity: 1; }
@@ -1728,6 +1874,10 @@ input:focus-visible, select:focus-visible, textarea:focus-visible {
   border-top-color: var(--primary);
   border-radius: 50%;
   animation: server-sync-spin 0.8s linear infinite;
+}
+.server-sync-spinner-orange {
+  border-color: rgba(245, 158, 11, 0.3);
+  border-top-color: var(--warning);
 }
 @keyframes server-sync-spin {
   to { transform: rotate(360deg); }

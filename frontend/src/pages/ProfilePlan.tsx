@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useSearchParams, Link } from "react-router-dom";
 import { api } from "../api/client";
 import { useAuth } from "../contexts/AuthContext";
 
@@ -105,11 +105,6 @@ export default function ProfilePlan({ embedded }: ProfilePlanProps) {
 
   const content = (
     <>
-      {!embedded && (
-        <div className="page-header">
-          <h1>Plan & Billing</h1>
-        </div>
-      )}
       {/* Current Plan Card */}
       <div className="card" style={{ marginBottom: "2rem" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "1rem", marginBottom: "1.5rem" }}>
@@ -302,5 +297,13 @@ export default function ProfilePlan({ embedded }: ProfilePlanProps) {
   if (embedded) {
     return <div className="profile-section">{content}</div>;
   }
-  return <div className="container app-page">{content}</div>;
+  return (
+    <div className="container app-page">
+      <div className="page-header">
+        <Link to="/" className="btn-link">← Dashboard</Link>
+        <h1 style={{ marginTop: "0.5rem" }}>Plan & billing</h1>
+      </div>
+      {content}
+    </div>
+  );
 }

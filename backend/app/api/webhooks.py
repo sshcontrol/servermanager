@@ -46,6 +46,7 @@ async def stripe_webhook(
 ):
     """Handle Stripe webhook events. Verifies signature and processes checkout.session.completed."""
     if not stripe_signature:
+        logger.warning("Stripe webhook: missing Stripe-Signature header")
         raise HTTPException(status_code=400, detail="Missing Stripe-Signature header")
 
     result = await db.execute(select(PlatformSettings).where(PlatformSettings.id == "1"))
@@ -64,7 +65,12 @@ async def stripe_webhook(
         logger.warning("Stripe webhook invalid payload: %s", e)
         raise HTTPException(status_code=400, detail="Invalid payload")
     except stripe.SignatureVerificationError as e:
-        logger.warning("Stripe webhook signature verification failed: %s", e)
+        logger.warning(
+            "Stripe webhook signature verification failed: %s. "
+            "Ensure webhook secret matches Stripe mode (test vs live). "
+            "Create a separate webhook endpoint in Stripe Dashboard for live mode and use its signing secret.",
+            e,
+        )
         raise HTTPException(status_code=400, detail="Invalid signature")
 
     if event["type"] == "checkout.session.completed":

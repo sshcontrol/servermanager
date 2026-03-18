@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { api } from "../api/client";
+import Toggle from "../components/Toggle";
 
 type PlanItem = {
   id: string;
@@ -192,14 +193,14 @@ export default function SuperadminPlans() {
                 <input type="number" value={form.sort_order} onChange={(e) => update("sort_order", parseInt(e.target.value) || 0)} />
               </div>
               <div className="form-group" style={{ display: "flex", flexDirection: "column", gap: "0.75rem", paddingTop: "1.75rem" }}>
-                <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
-                  <input type="checkbox" checked={form.is_free} onChange={(e) => update("is_free", e.target.checked)} style={{ width: "auto" }} />
-                  <label style={{ margin: 0 }}>Free plan</label>
-                </div>
-                <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
-                  <input type="checkbox" checked={form.is_hidden} onChange={(e) => update("is_hidden", e.target.checked)} style={{ width: "auto" }} />
-                  <label style={{ margin: 0, fontSize: "0.85rem" }}>Hidden (custom plan, not shown publicly)</label>
-                </div>
+                <label style={{ display: "flex", alignItems: "center", gap: "0.75rem", margin: 0, cursor: "pointer" }}>
+                  <Toggle checked={form.is_free} onChange={(v) => update("is_free", v)} />
+                  <span>Free plan</span>
+                </label>
+                <label style={{ display: "flex", alignItems: "center", gap: "0.75rem", margin: 0, fontSize: "0.85rem", cursor: "pointer" }}>
+                  <Toggle checked={form.is_hidden} onChange={(v) => update("is_hidden", v)} />
+                  <span>Hidden (custom plan, not shown publicly)</span>
+                </label>
               </div>
             </div>
             <div style={{ display: "flex", gap: "1rem", marginTop: "1.5rem" }}>

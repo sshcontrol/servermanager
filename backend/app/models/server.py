@@ -38,7 +38,7 @@ class ServerAccess(Base):
 
     user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
     server_id = Column(String(36), ForeignKey("servers.id", ondelete="CASCADE"), primary_key=True)
-    role = Column(String(20), nullable=False)  # admin | user
+    role = Column(String(20), nullable=False)  # root | user (Linux user type on server)
     created_at = Column(DateTime, default=utcnow_naive, nullable=False)
 
     server = relationship("Server", back_populates="accesses")

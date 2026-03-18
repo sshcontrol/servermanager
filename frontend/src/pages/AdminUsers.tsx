@@ -3,6 +3,7 @@ import { api } from "../api/client";
 import { normalizeToE164, isValidE164 } from "../lib/phone";
 import { validatePassword } from "../utils/password";
 import PasswordField from "../components/PasswordField";
+import Toggle from "../components/Toggle";
 
 type UserRow = {
   id: string;
@@ -300,12 +301,8 @@ export default function AdminUsers() {
                   <span style={{ color: "var(--text-muted)", fontSize: "0.9rem" }}>Loading roles…</span>
                 ) : (
                   roles.map((r) => (
-                    <label key={r.id} style={{ display: "flex", alignItems: "center", gap: "0.35rem", cursor: "pointer" }}>
-                      <input
-                        type="checkbox"
-                        checked={createForm.role_ids.includes(r.id)}
-                        onChange={() => toggleRole(r.id)}
-                      />
+                    <label key={r.id} style={{ display: "flex", alignItems: "center", gap: "0.75rem", cursor: "pointer" }}>
+                      <Toggle checked={createForm.role_ids.includes(r.id)} onChange={() => toggleRole(r.id)} />
                       <span>{r.name}</span>
                       {r.description && (
                         <span style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>({r.description})</span>
@@ -335,12 +332,8 @@ export default function AdminUsers() {
               <label>Roles</label>
               <div style={{ display: "flex", flexWrap: "wrap", gap: "0.75rem", marginTop: "0.35rem" }}>
                 {roles.map((r) => (
-                  <label key={r.id} style={{ display: "flex", alignItems: "center", gap: "0.35rem", cursor: "pointer" }}>
-                    <input
-                      type="checkbox"
-                      checked={editRoleIds.includes(r.id)}
-                      onChange={() => toggleEditRole(r.id)}
-                    />
+                  <label key={r.id} style={{ display: "flex", alignItems: "center", gap: "0.75rem", cursor: "pointer" }}>
+                    <Toggle checked={editRoleIds.includes(r.id)} onChange={() => toggleEditRole(r.id)} />
                     <span>{r.name}</span>
                   </label>
                 ))}

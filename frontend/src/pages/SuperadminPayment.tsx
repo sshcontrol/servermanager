@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { Link } from "react-router-dom";
 import { api, downloadFile } from "../api/client";
 import DestructiveVerificationModal from "../components/DestructiveVerificationModal";
+import Toggle from "../components/Toggle";
 
 type PaymentSettingsData = {
   stripe_secret_key_masked: string;
@@ -337,29 +338,17 @@ export default function SuperadminPayment() {
           <div className="form-group">
             <label>Channels to use</label>
             <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem", marginTop: "0.5rem" }}>
-              <label>
-                <input
-                  type="checkbox"
-                  checked={renewalEmail}
-                  onChange={(e) => setRenewalEmail(e.target.checked)}
-                />
-                {" "}Email
+              <label style={{ display: "flex", alignItems: "center", gap: "0.75rem", cursor: "pointer" }}>
+                <Toggle checked={renewalEmail} onChange={setRenewalEmail} />
+                Email
               </label>
-              <label>
-                <input
-                  type="checkbox"
-                  checked={renewalNotification}
-                  onChange={(e) => setRenewalNotification(e.target.checked)}
-                />
-                {" "}In-app notification
+              <label style={{ display: "flex", alignItems: "center", gap: "0.75rem", cursor: "pointer" }}>
+                <Toggle checked={renewalNotification} onChange={setRenewalNotification} />
+                In-app notification
               </label>
-              <label>
-                <input
-                  type="checkbox"
-                  checked={renewalSms}
-                  onChange={(e) => setRenewalSms(e.target.checked)}
-                />
-                {" "}SMS (requires SMS provider integration)
+              <label style={{ display: "flex", alignItems: "center", gap: "0.75rem", cursor: "pointer" }}>
+                <Toggle checked={renewalSms} onChange={setRenewalSms} />
+                SMS (requires SMS provider integration)
               </label>
             </div>
           </div>

@@ -1,4 +1,4 @@
-import { NavLink, Outlet } from "react-router-dom";
+import { NavLink, Outlet, Link } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
 
 const tabIcon = (name: string) => {
@@ -36,7 +36,8 @@ export default function PlanBillingLayout() {
   return (
     <div className="container app-page profile-page">
       <div className="profile-page-header">
-        <h1>Plan & Billing</h1>
+        <Link to="/" className="btn-link">← Dashboard</Link>
+        <h1 style={{ marginTop: "0.5rem" }}>Plan & billing</h1>
         <p className="profile-page-subtitle">Manage your plan, billing address, and payment history</p>
       </div>
 

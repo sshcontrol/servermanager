@@ -67,7 +67,22 @@ CORS_ORIGINS=https://your-frontend.com,http://192.168.1.100:3000
 ```
 The default list includes localhost, 127.0.0.1, sshcontrol.com, and 65.21.240.77. LAN IPs (192.168.x.x, 10.x.x.x) are allowed via regex.
 
-## 8. Database
+## 8. Gateway Timeout when restoring database backup
+
+Database restore can take several minutes. If you see **504 Gateway Timeout**:
+
+1. **Frontend nginx** (included in this project): `proxy_read_timeout` is set to 600s in `frontend/nginx.conf`. Rebuild the frontend to apply:
+   ```bash
+   docker compose build --no-cache frontend && docker compose up -d frontend
+   ```
+
+2. **Nginx Proxy Manager** (or another reverse proxy in front): Increase the proxy read timeout to at least 600 seconds (10 minutes). In NPM: edit your proxy host → Custom locations or Advanced → add:
+   ```
+   proxy_read_timeout 600s;
+   proxy_send_timeout 600s;
+   ```
+
+## 9. Database
 
 Backend requires PostgreSQL. If `DATABASE_URL` is wrong or the database is down, the backend may fail to start. Check:
 ```bash

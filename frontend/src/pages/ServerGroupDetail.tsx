@@ -14,11 +14,11 @@ type ServerGroupDetail = {
 };
 
 type ServerItem = { id: string; hostname: string; friendly_name: string | null; ip_address: string | null };
-type UserItem = { id: string; username: string; email: string };
+type UserItem = { id: string; username: string; email: string; is_superuser?: boolean; roles?: { id: string; name: string }[] };
 
 export default function ServerGroupDetailPage() {
   const { id } = useParams<{ id: string }>();
-  const { toast } = useToast();
+  const { showSuccessModal } = useToast();
   const [group, setGroup] = useState<ServerGroupDetail | null>(null);
   const [allServers, setAllServers] = useState<ServerItem[]>([]);
   const [allUsers, setAllUsers] = useState<UserItem[]>([]);
@@ -29,7 +29,7 @@ export default function ServerGroupDetailPage() {
   const [editDesc, setEditDesc] = useState("");
   const [addServerId, setAddServerId] = useState("");
   const [addUserId, setAddUserId] = useState("");
-  const [addRole, setAddRole] = useState<"admin" | "user">("user");
+  const [addRole, setAddRole] = useState<"root" | "user">("user");
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [confirmAction, setConfirmAction] = useState<{ msg: string; fn: () => Promise<void> } | null>(null);
 
@@ -39,7 +39,7 @@ export default function ServerGroupDetailPage() {
     Promise.all([
       api.get<ServerGroupDetail>(`/api/server-groups/${id}`),
       api.get<ServerItem[]>("/api/servers"),
-      api.get<{ users: UserItem[] }>("/api/users?limit=500").then((r) => r.users || []),
+      api.get<{ users: UserItem[] }>("/api/users?limit=500").then((r) => (r.users || []).filter((u) => !(u.is_superuser || (u.roles || []).some((role) => role.name === "admin")))),
     ])
       .then(([g, servers, users]) => {
         setGroup(g);
@@ -59,6 +59,7 @@ export default function ServerGroupDetailPage() {
     if (!id) return;
     try {
       await api.patch(`/api/server-groups/${id}`, { name: editName.trim(), description: editDesc.trim() || null });
+      showSuccessModal();
       setEditing(false);
       load();
     } catch (e) {
@@ -84,7 +85,7 @@ export default function ServerGroupDetailPage() {
       setAddServerId("");
       load();
       const sync = res?.sync_results || [];
-      toast("success", sync.length > 0 ? formatSyncResults(sync) : "Server added.");
+      showSuccessModal( sync.length > 0 ? formatSyncResults(sync) : "Server added.");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to add server");
     }
@@ -101,7 +102,7 @@ export default function ServerGroupDetailPage() {
           );
           load();
           const sync = res?.sync_results || [];
-          toast("success", sync.length > 0 ? formatSyncResults(sync) : "Server removed from group.");
+          showSuccessModal( sync.length > 0 ? formatSyncResults(sync) : "Server removed from group.");
         } catch (e) {
           setError(e instanceof Error ? e.message : "Failed to remove");
         }
@@ -120,13 +121,13 @@ export default function ServerGroupDetailPage() {
       setAddUserId("");
       load();
       const sync = res?.sync_results || [];
-      toast("success", sync.length > 0 ? formatSyncResults(sync) : "User added.");
+      showSuccessModal( sync.length > 0 ? formatSyncResults(sync) : "User added.");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to add user");
     }
   };
 
-  const handleSetRole = async (userId: string, role: "admin" | "user") => {
+  const handleSetRole = async (userId: string, role: "root" | "user") => {
     if (!id) return;
     try {
       const res = await api.post<{ ok?: boolean; sync_results?: { server_name: string; success: boolean; error?: string }[] }>(
@@ -135,7 +136,7 @@ export default function ServerGroupDetailPage() {
       );
       load();
       const sync = res?.sync_results || [];
-      toast("success", sync.length > 0 ? formatSyncResults(sync) : "Role updated.");
+      showSuccessModal( sync.length > 0 ? formatSyncResults(sync) : "Role updated.");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to update role");
     }
@@ -152,7 +153,7 @@ export default function ServerGroupDetailPage() {
           );
           load();
           const sync = res?.sync_results || [];
-          toast("success", sync.length > 0 ? formatSyncResults(sync) : "User removed from group.");
+          showSuccessModal( sync.length > 0 ? formatSyncResults(sync) : "User removed from group.");
         } catch (e) {
           setError(e instanceof Error ? e.message : "Failed to remove");
         }
@@ -169,12 +170,11 @@ export default function ServerGroupDetailPage() {
 
   return (
     <div className="container app-page">
-      <nav className="breadcrumb">
-        <Link to="/server-groups">Server groups</Link>
-        <span>{group.name}</span>
-      </nav>
-      <h1 className="app-page-title">{group.name}</h1>
-      {group.description && <p className="text-muted">{group.description}</p>}
+      <div className="page-header">
+        <Link to="/server-groups" className="btn-link">← Server groups</Link>
+        <h1 style={{ marginTop: "0.5rem" }}>{group.name}</h1>
+        {group.description && <p className="text-muted" style={{ marginTop: "0.25rem" }}>{group.description}</p>}
+      </div>
       {error && <p className="error-msg">{error}</p>}
 
       {!editing ? (
@@ -233,9 +233,9 @@ export default function ServerGroupDetailPage() {
               <tr key={a.user_id}>
                 <td>{a.username}</td>
                 <td>
-                  <select value={a.role} onChange={(e) => handleSetRole(a.user_id, e.target.value as "admin" | "user")}>
+                  <select value={a.role === "admin" ? "root" : a.role} onChange={(e) => handleSetRole(a.user_id, e.target.value as "root" | "user")}>
                     <option value="user">User</option>
-                    <option value="admin">Admin</option>
+                    <option value="root">Root</option>
                   </select>
                 </td>
                 <td><button type="button" className="secondary small" onClick={() => handleRemoveUser(a.user_id)}>Remove</button></td>
@@ -251,9 +251,9 @@ export default function ServerGroupDetailPage() {
                 <option key={u.id} value={u.id}>{u.username} ({u.email})</option>
               ))}
             </select>
-            <select value={addRole} onChange={(e) => setAddRole(e.target.value as "admin" | "user")}>
+            <select value={addRole} onChange={(e) => setAddRole(e.target.value as "root" | "user")}>
               <option value="user">User</option>
-              <option value="admin">Admin</option>
+              <option value="root">Root</option>
             </select>
             <button type="button" className="primary" onClick={handleAddUser} disabled={!addUserId}>Add</button>
           </div>

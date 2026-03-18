@@ -1,4 +1,4 @@
-"""Per-user SSH keys for server access. Role (admin/user) is per-server and enforced via authorized_keys."""
+"""Per-user SSH keys for server access. Role (root/user) is per-server and enforced via authorized_keys."""
 
 import base64
 import hashlib

@@ -108,4 +108,4 @@ def get_totp_uri(secret: str, account_name: str) -> str:
 
 def verify_totp(secret: str, token: str) -> bool:
     totp = pyotp.TOTP(secret)
-    return totp.verify(token, valid_window=1)
+    return totp.verify(token, valid_window=2)  # ±2 periods (~90s) for clock skew tolerance

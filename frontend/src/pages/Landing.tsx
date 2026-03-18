@@ -5,6 +5,7 @@ import { api } from "../api/client";
 import Logo from "../components/Logo";
 import LogoSpinner from "../components/LogoSpinner";
 import { validatePassword, PASSWORD_HINT } from "../utils/password";
+import Toggle from "../components/Toggle";
 import "./Landing.css";
 
 const API_BASE = import.meta.env.VITE_API_URL || "";
@@ -116,6 +117,7 @@ function AuthModal({ defaultTab, onClose }: { defaultTab: "signin" | "signup"; o
   const [totpCode, setTotpCode] = useState("");
   const [smsCode, setSmsCode] = useState("");
   const [pendingToken, setPendingToken] = useState<string | null>(null);
+  const [needsTotp, setNeedsTotp] = useState(false);
   const [loginError, setLoginError] = useState("");
   const [loginLoading, setLoginLoading] = useState(false);
   const [resendLoading, setResendLoading] = useState(false);
@@ -183,12 +185,29 @@ function AuthModal({ defaultTab, onClose }: { defaultTab: "signin" | "signup"; o
 
   const isRecaptchaWidgetRendered = () => recaptchaRef.current?.querySelector("iframe") != null;
 
+  const needsVerification = needsTotp || pendingToken;
+
+  const handleLoginBack = () => {
+    setNeedsTotp(false);
+    setPendingToken(null);
+    setTotpCode("");
+    setSmsCode("");
+    setLoginError("");
+    if (recaptchaSiteKey && (window as unknown as { grecaptcha?: { reset: () => void } }).grecaptcha) {
+      (window as unknown as { grecaptcha: { reset: () => void } }).grecaptcha.reset();
+    }
+  };
+
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoginError("");
     setResendSent(false);
     if (pendingToken && smsCode.length < 4) {
       setLoginError("Enter the 4-digit code from your phone");
+      return;
+    }
+    if (needsTotp && totpCode.length < 6) {
+      setLoginError("Enter the 6-digit code from your authenticator app");
       return;
     }
     setLoginLoading(true);
@@ -209,7 +228,7 @@ function AuthModal({ defaultTab, onClose }: { defaultTab: "signin" | "signup"; o
       await login(
         username,
         password,
-        totpCode || undefined,
+        needsTotp ? totpCode : undefined,
         recaptchaToken,
         pendingToken ? { pendingToken, smsCode } : undefined
       );
@@ -222,11 +241,20 @@ function AuthModal({ defaultTab, onClose }: { defaultTab: "signin" | "signup"; o
       if (smsErr.requiresSms && smsErr.pendingToken) {
         setPendingToken(smsErr.pendingToken);
         setSmsCode("");
+        setNeedsTotp(false);
         setLoginError("");
         setLoginLoading(false);
         return;
       }
-      setLoginError(err instanceof Error ? err.message : "Login failed");
+      const msg = err instanceof Error ? err.message : "Login failed";
+      if (msg.toLowerCase().includes("totp") && msg.toLowerCase().includes("required")) {
+        setNeedsTotp(true);
+        setTotpCode("");
+        setLoginError("");
+        setLoginLoading(false);
+        return;
+      }
+      setLoginError(msg);
       if (recaptchaSiteKey && (window as unknown as { grecaptcha?: { reset: () => void } }).grecaptcha) {
         (window as unknown as { grecaptcha: { reset: () => void } }).grecaptcha.reset();
       }
@@ -298,41 +326,53 @@ function AuthModal({ defaultTab, onClose }: { defaultTab: "signin" | "signup"; o
         {/* ─── Sign In ─── */}
         {tab === "signin" && (
           <form onSubmit={handleLogin} className="auth-form" autoComplete="on">
-            <div className="auth-field">
-              <label htmlFor="auth-user">Username or Email</label>
-              <div className="auth-input-wrap">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
-                <input id="auth-user" type="text" value={username} onChange={e => setUsername(e.target.value)} required autoComplete="username" placeholder="your-username" />
-              </div>
-            </div>
-            <div className="auth-field">
-              <label htmlFor="auth-pass">Password</label>
-              <div className="auth-input-wrap">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="18" height="11" x="3" y="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
-                <input id="auth-pass" type="password" value={password} onChange={e => setPassword(e.target.value)} required autoComplete="current-password" placeholder="********" />
-              </div>
-            </div>
-            {!pendingToken && (
-              <div className="auth-field">
-                <label htmlFor="auth-totp">2FA Code <span className="auth-optional">(if enabled)</span></label>
-                <div className="auth-input-wrap">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
-                  <input id="auth-totp" type="text" value={totpCode} onChange={e => setTotpCode(e.target.value)} maxLength={6} autoComplete="one-time-code" placeholder="000000" />
+            {!needsVerification ? (
+              <>
+                <div className="auth-field">
+                  <label htmlFor="auth-user">Username or Email</label>
+                  <div className="auth-input-wrap">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+                    <input id="auth-user" type="text" value={username} onChange={e => setUsername(e.target.value)} required autoComplete="username" placeholder="your-username" />
+                  </div>
                 </div>
-              </div>
-            )}
-            {pendingToken && (
-              <div className="auth-field">
-                <label htmlFor="auth-sms">SMS verification code</label>
-                <div className="auth-input-wrap">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-                  <input id="auth-sms" type="text" value={smsCode} onChange={e => setSmsCode(e.target.value.replace(/\D/g, "").slice(0, 8))} placeholder="0000" maxLength={8} inputMode="numeric" autoComplete="one-time-code" />
+                <div className="auth-field">
+                  <label htmlFor="auth-pass">Password</label>
+                  <div className="auth-input-wrap">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="18" height="11" x="3" y="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+                    <input id="auth-pass" type="password" value={password} onChange={e => setPassword(e.target.value)} required autoComplete="current-password" placeholder="********" />
+                  </div>
                 </div>
-                <p style={{ fontSize: "0.8rem", color: "var(--text-muted)", marginTop: "0.25rem" }}>Enter the 4-digit code sent to your phone.</p>
-              </div>
+              </>
+            ) : (
+              <>
+                <p style={{ fontSize: "0.9rem", color: "var(--text-muted)", marginBottom: "1rem" }}>
+                  {needsTotp ? "Enter the 6-digit code from your authenticator app." : "Enter the 4-digit code sent to your phone."}
+                </p>
+                {needsTotp && (
+                  <div className="auth-field">
+                    <label htmlFor="auth-totp">2FA Code</label>
+                    <div className="auth-input-wrap">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+                      <input id="auth-totp" type="text" value={totpCode} onChange={e => setTotpCode(e.target.value)} maxLength={6} autoComplete="one-time-code" placeholder="000000" required />
+                    </div>
+                  </div>
+                )}
+                {pendingToken && (
+                  <div className="auth-field">
+                    <label htmlFor="auth-sms">SMS verification code</label>
+                    <div className="auth-input-wrap">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                      <input id="auth-sms" type="text" value={smsCode} onChange={e => setSmsCode(e.target.value.replace(/\D/g, "").slice(0, 8))} placeholder="0000" maxLength={8} inputMode="numeric" autoComplete="one-time-code" required />
+                    </div>
+                  </div>
+                )}
+                <button type="button" className="auth-link-btn" onClick={handleLoginBack} style={{ marginBottom: "0.75rem" }}>
+                  ← Back to sign in
+                </button>
+              </>
             )}
             {loginError && <p className="auth-error">{loginError}</p>}
-            {loginError?.toLowerCase().includes("verify") && username.includes("@") && (
+            {loginError?.toLowerCase().includes("verify") && username.includes("@") && !needsVerification && (
               <p className="auth-links" style={{ marginTop: "0.5rem" }}>
                 <button type="button" className="auth-link-btn" onClick={handleResendVerification} disabled={resendLoading}>
                   {resendLoading ? "Sending..." : "Resend verification email"}
@@ -340,12 +380,12 @@ function AuthModal({ defaultTab, onClose }: { defaultTab: "signin" | "signup"; o
                 {resendSent && <span style={{ marginLeft: "0.5rem", color: "var(--text-secondary)", fontSize: "0.9rem" }}>Check your inbox.</span>}
               </p>
             )}
-            {recaptchaSiteKey && (
+            {recaptchaSiteKey && !pendingToken && (
               <div className="auth-field">
                 <div ref={recaptchaRef} style={{ minHeight: 78, display: "flex", alignItems: "center", justifyContent: "flex-start" }} />
               </div>
             )}
-            {googleOAuthEnabled && (
+            {googleOAuthEnabled && !needsVerification && (
               <>
                 <a
                   href={`${API_BASE || ""}/api/auth/google?mode=login`}
@@ -364,7 +404,7 @@ function AuthModal({ defaultTab, onClose }: { defaultTab: "signin" | "signup"; o
               </>
             )}
             <button type="submit" className="auth-submit" disabled={loginLoading}>
-              {loginLoading ? "Signing in..." : "Sign In"}
+              {loginLoading ? "Verifying…" : needsVerification ? "Verify & Sign In" : "Sign In"}
             </button>
             <div className="auth-links">
               <Link to="/forgot-password" onClick={onClose}>Forgot password?</Link>
@@ -375,8 +415,8 @@ function AuthModal({ defaultTab, onClose }: { defaultTab: "signin" | "signup"; o
         {/* ─── Sign Up ─── */}
         {tab === "signup" && !signupSuccess && (
           <div className="auth-form" style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
-            <label className="auth-terms">
-              <input type="checkbox" checked={acceptTerms} onChange={e => setAcceptTerms(e.target.checked)} />
+            <label className="auth-terms" style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
+              <Toggle checked={acceptTerms} onChange={setAcceptTerms} />
               <span>I agree to the{" "}
                 <button type="button" className="auth-terms-link" onClick={() => setShowTerms(true)}>Terms and Conditions</button>
               </span>

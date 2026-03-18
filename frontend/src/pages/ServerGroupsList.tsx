@@ -66,9 +66,10 @@ export default function ServerGroupsList() {
 
   return (
     <div className="container app-page">
-      <div className="page-header" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "0.75rem" }}>
+      <div className="page-header page-header-actions" style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: "0.75rem" }}>
         <div>
-          <h1>Server groups</h1>
+          <Link to="/" className="btn-link">← Dashboard</Link>
+          <h1 style={{ marginTop: "0.5rem" }}>Server groups</h1>
           <p style={{ color: "var(--text-muted)", fontSize: "0.95rem", marginTop: "0.25rem", marginBottom: 0 }}>
             Assign servers to a group, then assign users to the group with a role. Users get that role on all servers in the group.
           </p>

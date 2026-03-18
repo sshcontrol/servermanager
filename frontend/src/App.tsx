@@ -130,7 +130,7 @@ export default function App() {
       <Route path="/server/add" element={<ProtectedRoute adminOnly><ServerAdd /></ProtectedRoute>} />
       <Route path="/server/access" element={<ProtectedRoute><ServerAccess /></ProtectedRoute>} />
       <Route path="/server/:id" element={<ProtectedRoute><ServerDetail /></ProtectedRoute>} />
-      <Route path="/server" element={<ProtectedRoute><ServerList /></ProtectedRoute>} />
+      <Route path="/server" element={<ProtectedRoute adminOnly><ServerList /></ProtectedRoute>} />
       <Route path="/server-groups" element={<ProtectedRoute adminOnly><ServerGroupsList /></ProtectedRoute>} />
       <Route path="/server-groups/:id" element={<ProtectedRoute adminOnly><ServerGroupDetail /></ProtectedRoute>} />
       <Route path="/user-groups" element={<ProtectedRoute adminOnly><UserGroupsList /></ProtectedRoute>} />

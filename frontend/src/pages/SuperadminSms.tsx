@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../api/client";
+import Toggle from "../components/Toggle";
 
 type SmppSettingsData = {
   link: string;
@@ -288,13 +289,7 @@ export default function SuperadminSms() {
           </div>
 
           <div className="form-group" style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
-            <input
-              type="checkbox"
-              checked={enabled}
-              onChange={(e) => setEnabled(e.target.checked)}
-              style={{ width: "auto", accentColor: "var(--accent)" }}
-              id="sms-enabled"
-            />
+            <Toggle id="sms-enabled" checked={enabled} onChange={setEnabled} />
             <label htmlFor="sms-enabled" style={{ margin: 0 }}>
               Enable SMS sending
             </label>

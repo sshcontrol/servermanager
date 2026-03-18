@@ -1,6 +1,6 @@
 # SSHCONTROL
 
-FastAPI backend with JWT auth, role-based permissions, TOTP 2FA, PostgreSQL schema, and React frontend with admin/user dashboards. SSH key–based server access: per-user keys, per-server roles (admin/user), and authorized_keys sync.
+FastAPI backend with JWT auth, role-based permissions, TOTP 2FA, PostgreSQL schema, and React frontend with admin/user dashboards. SSH key–based server access: per-user keys, per-server roles (root/user for Linux), and authorized_keys sync.
 
 ---
 
@@ -159,6 +159,8 @@ In the **same** `.env` you use for `docker compose`:
 
 **User login (no password):** The deploy script creates a **Linux user** for each panel user you assign to the server (sync runs every 5 min). So when you grant access to a user, they can SSH as **their panel username** (e.g. `aram`) with their key only — no password. In PuTTY they must set the **username** to that name (lowercase) and load their **PPK** under Connection → SSH → Auth → Private key file. If the server was deployed **before** this feature, re-run the deploy command on the server once so it installs the user-sync script; then new users will get Linux accounts within 5 minutes.
 
+**SSH 2FA (optional):** If a user has **2FA (TOTP) enabled** in the panel (Profile → Security → Setup TOTP), they will be prompted for their 6-digit verification code after key authentication when they SSH. The code is verified by the panel; the TOTP secret never leaves the panel. Users without 2FA connect with key-only as before. **Redeploy** servers to enable SSH 2FA (run the deploy command again). Note: 2FA requires an **interactive** SSH session; `scp` and `rsync` are not supported for 2FA users.
+
 **PuTTY (Windows): if the PPK shows an error**
 
 1. **Check Session settings:** Host = server IP or hostname, Port = 22, Connection type = SSH.
@@ -178,7 +180,7 @@ This means the server does not have your public key in `~/.ssh/authorized_keys` 
    You must have run the deploy command (from the panel: Add server → copy command → on **65.21.240.77** run `curl -sSL "http://.../api/servers/deploy/script?token=..." | sudo bash`). If you only added the server in the panel but never ran that command on 65.21.240.77, do it now. That installs the sync and creates Linux users.
 
 2. **You (aram) are in this server’s Access list**  
-   In the panel: **Servers** → click this server → **Access**. Your user **aram** must be listed with a role (Admin or User). If not, an admin must add you.
+   In the panel: **Servers** → click this server → **Access**. Your user **aram** must be listed with a role (Root or User). If not, an admin must add you.
 
 3. **You have an SSH key in the panel**  
    Log in as aram → **Profile** → **SSH keys**. There must be a key (or generate one). The key you use in PuTTY must be the one from the panel: **Download my SSH key (PEM or PPK)** and use that file in PuTTY. If you use an old or different key, the server will refuse it.

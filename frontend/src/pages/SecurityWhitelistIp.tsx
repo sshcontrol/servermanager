@@ -32,7 +32,7 @@ export default function SecurityWhitelistIp() {
   const [editUserId, setEditUserId] = useState("");
   const [editLoading, setEditLoading] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
-  const { toast } = useToast();
+  const { showSuccessModal } = useToast();
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [confirmTargetId, setConfirmTargetId] = useState<string | null>(null);
 
@@ -105,7 +105,7 @@ export default function SecurityWhitelistIp() {
         scope: addScope,
         user_id: addScope === "user" ? addUserId : null,
       });
-      setMessage({ type: "success", text: "IP added to whitelist" });
+      showSuccessModal("IP added to whitelist");
       setAddIp("");
       setAddUserId("");
       loadEntries();
@@ -143,7 +143,7 @@ export default function SecurityWhitelistIp() {
         scope: editScope,
         user_id: editScope === "user" ? editUserId : null,
       });
-      setMessage({ type: "success", text: "Entry updated" });
+      showSuccessModal("Entry updated");
       setEditingId(null);
       loadEntries();
     } catch (e) {
@@ -165,7 +165,7 @@ export default function SecurityWhitelistIp() {
     setMessage(null);
     try {
       await api.delete(`/api/security/whitelist-ip/entries/${confirmTargetId}`);
-      toast("success", "Entry removed");
+      showSuccessModal("Entry removed");
       loadEntries();
       if (editingId === confirmTargetId) setEditingId(null);
     } catch (e) {
