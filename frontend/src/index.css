@@ -1021,6 +1021,26 @@ tbody tr:hover {
   padding: 1.25rem 1.25rem 0;
   border-top: 1px solid var(--border);
 }
+.app-sidebar-support-btn {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  margin-bottom: 0.75rem;
+  border-radius: 8px;
+  background: rgba(45,212,191,0.08);
+  border: 1px solid rgba(45,212,191,0.2);
+  color: #2dd4bf;
+  font-size: 0.82rem;
+  font-weight: 600;
+  text-decoration: none;
+  transition: background 0.2s, border-color 0.2s;
+  cursor: pointer;
+}
+.app-sidebar-support-btn:hover {
+  background: rgba(45,212,191,0.15);
+  border-color: rgba(45,212,191,0.4);
+}
 .app-sidebar-user {
   display: flex;
   flex-direction: column;

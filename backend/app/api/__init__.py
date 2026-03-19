@@ -1,5 +1,5 @@
 from fastapi import APIRouter
-from app.api import auth, users, roles, admin_ssh_key, admin_backup, admin_billing, servers, history, server_groups, user_groups, security, signup, superadmin, notifications, webhooks, tenant
+from app.api import auth, users, roles, admin_ssh_key, admin_backup, admin_billing, servers, history, server_groups, user_groups, security, signup, superadmin, notifications, webhooks, tenant, tickets
 
 api_router = APIRouter(prefix="/api")
 
@@ -19,3 +19,4 @@ api_router.include_router(signup.router, prefix="/public", tags=["public"])
 api_router.include_router(superadmin.router, prefix="/superadmin", tags=["superadmin"])
 api_router.include_router(notifications.router, prefix="/notifications", tags=["notifications"])
 api_router.include_router(webhooks.router)
+api_router.include_router(tickets.router, prefix="/tickets", tags=["tickets"])

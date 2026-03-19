@@ -315,6 +315,12 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
                     </NavIcon>
                     History
                   </Link>
+                  <Link to="/superadmin/tickets" className={subClass("/superadmin/tickets")}>
+                    <NavIcon>
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><path d="M8 10h.01"/><path d="M12 10h.01"/><path d="M16 10h.01"/></svg>
+                    </NavIcon>
+                    Tickets
+                  </Link>
                 </div>
               )}
             </div>
@@ -419,6 +425,10 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
 
         </nav>
         <div className="app-sidebar-footer">
+          <Link to={isPlatformSuperadmin ? "/superadmin/tickets" : "/tickets"} className="app-sidebar-support-btn">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><path d="M8 10h.01"/><path d="M12 10h.01"/><path d="M16 10h.01"/></svg>
+            {isPlatformSuperadmin ? "Support Tickets" : "Support"}
+          </Link>
           <div className="app-sidebar-user">
             {user?.tenant_id && <span className="app-sidebar-company">Company: {user.company_name || '—'}</span>}
             <span className="app-sidebar-username">{user?.full_name || user?.username}</span>

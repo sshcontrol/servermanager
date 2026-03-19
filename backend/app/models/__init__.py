@@ -16,6 +16,7 @@ from app.models.notification import Notification
 from app.models.payment import PaymentTransaction
 from app.models.smpp_settings import SmppSettings
 from app.models.smpp_callback import SmppCallback
+from app.models.ticket import Ticket, TicketMessage
 
 __all__ = [
     "Tenant",
@@ -51,4 +52,6 @@ __all__ = [
     "PaymentTransaction",
     "SmppSettings",
     "SmppCallback",
+    "Ticket",
+    "TicketMessage",
 ]

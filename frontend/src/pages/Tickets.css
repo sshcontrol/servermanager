@@ -1,0 +1,296 @@
+/* ─── Ticket Create Form ────────────────────────────────────────────────── */
+.tk-create-form {
+  max-width: 720px;
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+  margin-top: 0.5rem;
+}
+.tk-form-row {
+  display: flex;
+  gap: 1rem;
+}
+.tk-form-row-2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+}
+.tk-form-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  flex: 1;
+}
+.tk-form-field label {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #cbd5e1;
+}
+.tk-form-field input,
+.tk-form-field select,
+.tk-form-field textarea {
+  padding: 0.6rem 0.75rem;
+  border-radius: 8px;
+  border: 1px solid #334155;
+  background: #0f172a;
+  color: #e2e8f0;
+  font-size: 0.92rem;
+  font-family: inherit;
+  transition: border-color 0.2s;
+}
+.tk-form-field input:focus,
+.tk-form-field select:focus,
+.tk-form-field textarea:focus {
+  outline: none;
+  border-color: #2dd4bf;
+}
+.tk-form-field textarea {
+  resize: vertical;
+  min-height: 120px;
+  line-height: 1.6;
+}
+.tk-form-actions {
+  display: flex;
+  gap: 0.75rem;
+  justify-content: flex-end;
+  margin-top: 0.5rem;
+}
+
+/* ─── Ticket List Cards ────────────────────────────────────────────────── */
+.tk-ticket-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.tk-ticket-card {
+  background: #1e293b;
+  border: 1px solid #334155;
+  border-radius: 10px;
+  padding: 1rem 1.25rem;
+  cursor: pointer;
+  transition: border-color 0.2s, background 0.2s, transform 0.15s;
+}
+.tk-ticket-card:hover {
+  border-color: #2dd4bf;
+  background: #1a2536;
+  transform: translateY(-1px);
+}
+.tk-ticket-card-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.35rem;
+}
+.tk-ticket-num {
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: #64748b;
+  font-family: "SF Mono", "Fira Code", "Fira Mono", monospace;
+}
+.tk-ticket-subject {
+  font-size: 1rem;
+  font-weight: 600;
+  color: #e2e8f0;
+  margin: 0 0 0.5rem;
+  line-height: 1.4;
+}
+.tk-ticket-card-bottom {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+.tk-ticket-date {
+  font-size: 0.78rem;
+  color: #64748b;
+  margin-left: auto;
+}
+
+/* ─── Badges ───────────────────────────────────────────────────────────── */
+.tk-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.2rem 0.6rem;
+  border-radius: 6px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  text-transform: capitalize;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+}
+.tk-badge-sm {
+  padding: 0.15rem 0.45rem;
+  font-size: 0.72rem;
+}
+
+/* ─── Empty State ──────────────────────────────────────────────────────── */
+.tk-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 4rem 2rem;
+  text-align: center;
+  gap: 1rem;
+  color: #64748b;
+}
+.tk-empty p {
+  font-size: 1rem;
+  margin: 0;
+}
+
+/* ─── Detail View Meta ─────────────────────────────────────────────────── */
+.tk-detail-info {
+  background: #1e293b;
+  border: 1px solid #334155;
+  border-radius: 10px;
+  padding: 1.25rem;
+  margin-bottom: 1.25rem;
+}
+.tk-detail-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1.25rem 2rem;
+}
+.tk-meta-item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+.tk-meta-label {
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #64748b;
+}
+.tk-meta-value {
+  font-size: 0.92rem;
+  color: #e2e8f0;
+  font-weight: 500;
+}
+.tk-meta-date {
+  font-size: 0.82rem;
+  color: #94a3b8;
+}
+
+/* ─── Messages / Conversation ──────────────────────────────────────────── */
+.tk-messages {
+  background: #1e293b;
+  border: 1px solid #334155;
+  border-radius: 10px;
+  padding: 1.25rem;
+}
+.tk-messages-title {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: #cbd5e1;
+  margin: 0 0 1rem;
+  padding-bottom: 0.75rem;
+  border-bottom: 1px solid #334155;
+}
+.tk-message-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  max-height: 500px;
+  overflow-y: auto;
+  padding-right: 0.25rem;
+  margin-bottom: 1rem;
+}
+.tk-msg {
+  padding: 0.85rem 1rem;
+  border-radius: 10px;
+  max-width: 85%;
+}
+.tk-msg-user {
+  background: #0f172a;
+  border: 1px solid #1e293b;
+  align-self: flex-start;
+}
+.tk-msg-staff {
+  background: rgba(45,212,191,0.08);
+  border: 1px solid rgba(45,212,191,0.2);
+  align-self: flex-end;
+}
+.tk-msg-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.4rem;
+  gap: 0.75rem;
+}
+.tk-msg-author {
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: #2dd4bf;
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+.tk-msg-user .tk-msg-author {
+  color: #60a5fa;
+}
+.tk-msg-time {
+  font-size: 0.72rem;
+  color: #64748b;
+  white-space: nowrap;
+}
+.tk-msg-body {
+  font-size: 0.9rem;
+  color: #cbd5e1;
+  line-height: 1.65;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* ─── Reply Box ────────────────────────────────────────────────────────── */
+.tk-reply-box {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid #334155;
+}
+.tk-reply-box textarea {
+  padding: 0.65rem 0.75rem;
+  border-radius: 8px;
+  border: 1px solid #334155;
+  background: #0f172a;
+  color: #e2e8f0;
+  font-size: 0.9rem;
+  font-family: inherit;
+  line-height: 1.55;
+  resize: vertical;
+  min-height: 80px;
+}
+.tk-reply-box textarea:focus {
+  outline: none;
+  border-color: #2dd4bf;
+}
+.tk-reply-box .btn-primary {
+  align-self: flex-end;
+}
+
+.tk-closed-notice {
+  text-align: center;
+  padding: 1rem;
+  color: #64748b;
+  font-size: 0.88rem;
+  font-style: italic;
+  border-top: 1px solid #334155;
+  margin-top: 0.5rem;
+}
+
+/* ─── Responsive ───────────────────────────────────────────────────────── */
+@media (max-width: 640px) {
+  .tk-form-row-2 {
+    grid-template-columns: 1fr;
+  }
+  .tk-msg {
+    max-width: 95%;
+  }
+  .tk-detail-meta {
+    gap: 0.75rem 1.25rem;
+  }
+}

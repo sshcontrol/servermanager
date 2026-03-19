@@ -53,6 +53,8 @@ const SuperadminNotifications = lazy(() => import("./pages/SuperadminNotificatio
 const SuperadminSms = lazy(() => import("./pages/SuperadminSms"));
 const SuperadminHistory = lazy(() => import("./pages/SuperadminHistory"));
 const SuperadminUsers = lazy(() => import("./pages/SuperadminUsers"));
+const SuperadminTickets = lazy(() => import("./pages/SuperadminTickets"));
+const Tickets = lazy(() => import("./pages/Tickets"));
 const PublicPlans = lazy(() => import("./pages/PublicPlans"));
 const AcceptInvitation = lazy(() => import("./pages/AcceptInvitation"));
 const AuthCallback = lazy(() => import("./pages/AuthCallback"));
@@ -160,6 +162,7 @@ export default function App() {
         <Route path="payment" element={<ProfilePaymentHistory />} />
       </Route>
 
+      <Route path="/tickets" element={<ProtectedRoute><Tickets /></ProtectedRoute>} />
       <Route path="/keys" element={<ProtectedRoute><ProfileKeys /></ProtectedRoute>} />
       <Route path="/history-export" element={<ProtectedRoute adminOnly><ProfileImportExport /></ProtectedRoute>} />
 
@@ -174,6 +177,7 @@ export default function App() {
       <Route path="/superadmin/notifications" element={<ProtectedRoute superadminOnly><SuperadminNotifications /></ProtectedRoute>} />
       <Route path="/superadmin/sms" element={<ProtectedRoute superadminOnly><SuperadminSms /></ProtectedRoute>} />
       <Route path="/superadmin/history" element={<ProtectedRoute superadminOnly><SuperadminHistory /></ProtectedRoute>} />
+      <Route path="/superadmin/tickets" element={<ProtectedRoute superadminOnly><SuperadminTickets /></ProtectedRoute>} />
 
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
