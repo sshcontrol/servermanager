@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
 from app.models.platform_key import PlatformSSHKey
+from app.core.encryption import encrypt_private_key, decrypt_private_key
 
 
 def _generate_rsa_key() -> tuple[str, str, str]:
@@ -133,13 +134,13 @@ class PlatformKeyService:
         private_pem, public_openssh, fingerprint = _generate_rsa_key()
         row = await PlatformKeyService.get_key(db, tenant_id)
         if row:
-            row.private_key_pem = private_pem
+            row.private_key_pem = encrypt_private_key(private_pem)
             row.public_key = public_openssh
             row.fingerprint = fingerprint
         else:
             row = PlatformSSHKey(
                 tenant_id=tenant_id,
-                private_key_pem=private_pem,
+                private_key_pem=encrypt_private_key(private_pem),
                 public_key=public_openssh,
                 fingerprint=fingerprint,
             )
@@ -149,7 +150,9 @@ class PlatformKeyService:
     @staticmethod
     async def get_private_pem(db: AsyncSession, tenant_id: Optional[str] = None) -> Optional[str]:
         row = await PlatformKeyService.get_key(db, tenant_id)
-        return row.private_key_pem if row else None
+        if not row or not row.private_key_pem:
+            return None
+        return decrypt_private_key(row.private_key_pem)
 
     @staticmethod
     async def get_ppk(db: AsyncSession, tenant_id: Optional[str] = None) -> Optional[str]:

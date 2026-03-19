@@ -43,6 +43,10 @@ class Settings(BaseSettings):
     # Public API URL (for deploy script)
     public_api_url: str = "https://sshcontrol.com"
 
+    # Fernet key for encrypting SSH private keys at rest.
+    # Generate with: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+    encryption_key: str = ""
+
     # When False, skip immediate SSH sync (backend in Docker often cannot SSH to targets).
     enable_ssh_sync: bool = False
 

@@ -3,6 +3,7 @@
 import base64
 import hashlib
 import io
+from datetime import timedelta
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, delete
 
@@ -13,9 +14,13 @@ import paramiko
 
 from app.models.ssh_key import UserSSHKey
 from app.models.user import User
+from app.models.utils import utcnow_naive
+from app.core.encryption import encrypt_private_key, decrypt_private_key
 
 USER_KEY_DOWNLOAD_FILENAME_PEM = "sshcontrol-key.pem"
 USER_KEY_DOWNLOAD_FILENAME_PPK = "sshcontrol-key.ppk"
+
+KEY_DOWNLOAD_WINDOW_HOURS = 48
 
 ALLOWED_PUBLIC_KEY_TYPES = ("ssh-rsa", "ssh-ed25519", "ecdsa-sha2-nistp256", "ecdsa-sha2-nistp384", "ecdsa-sha2-nistp521")
 
@@ -69,12 +74,14 @@ async def ensure_user_has_ssh_key(db: AsyncSession, user_id: str) -> UserSSHKey 
     if existing:
         return existing
     private_pem, public_openssh, fingerprint = _generate_rsa_key()
+    now = utcnow_naive()
     key = UserSSHKey(
         user_id=user_id,
         name="default",
         public_key=public_openssh,
-        private_key_pem=private_pem,
+        private_key_pem=encrypt_private_key(private_pem),
         fingerprint=fingerprint,
+        download_expires_at=now + timedelta(hours=KEY_DOWNLOAD_WINDOW_HOURS),
     )
     db.add(key)
     await db.flush()
@@ -85,7 +92,51 @@ async def regenerate_user_ssh_key(db: AsyncSession, user_id: str) -> UserSSHKey:
     """Delete all existing SSH keys for the user and create a new one. Servers get the new key on next sync (within 5 min)."""
     await db.execute(delete(UserSSHKey).where(UserSSHKey.user_id == user_id))
     await db.flush()
-    return await ensure_user_has_ssh_key(db, user_id)
+    key = await ensure_user_has_ssh_key(db, user_id)
+    return key
+
+
+async def get_decrypted_private_key(db: AsyncSession, user_id: str) -> tuple[UserSSHKey | None, str | None]:
+    """Return (key_row, decrypted_pem) for a user. Returns (None, None) if no key or expired."""
+    r = await db.execute(
+        select(UserSSHKey)
+        .where(UserSSHKey.user_id == user_id)
+        .where(UserSSHKey.private_key_pem.isnot(None))
+        .order_by(UserSSHKey.created_at)
+        .limit(1)
+    )
+    key = r.scalar_one_or_none()
+    if not key or not key.private_key_pem:
+        return None, None
+    if key.download_expires_at and utcnow_naive() > key.download_expires_at:
+        key.private_key_pem = None
+        await db.flush()
+        return key, None
+    return key, decrypt_private_key(key.private_key_pem)
+
+
+async def mark_downloaded(db: AsyncSession, key: UserSSHKey) -> None:
+    """Record first download timestamp."""
+    if key.downloaded_at is None:
+        key.downloaded_at = utcnow_naive()
+        await db.flush()
+
+
+async def purge_expired_private_keys(db: AsyncSession) -> int:
+    """Null out private keys past their download window. Returns count of purged keys."""
+    now = utcnow_naive()
+    r = await db.execute(
+        select(UserSSHKey)
+        .where(UserSSHKey.private_key_pem.isnot(None))
+        .where(UserSSHKey.download_expires_at.isnot(None))
+        .where(UserSSHKey.download_expires_at < now)
+    )
+    keys = r.scalars().all()
+    for k in keys:
+        k.private_key_pem = None
+    if keys:
+        await db.flush()
+    return len(keys)
 
 
 async def set_user_public_key(db: AsyncSession, user_id: str, public_key_str: str) -> UserSSHKey:

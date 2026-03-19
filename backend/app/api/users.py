@@ -128,12 +128,20 @@ async def get_my_ssh_key(
     )
     key = r.scalar_one_or_none()
     if not key:
-        return {"has_key": False, "public_key": None, "fingerprint": None, "uses_own_key": False}
+        return {"has_key": False, "public_key": None, "fingerprint": None, "uses_own_key": False, "download_available": False, "download_expires_at": None, "downloaded_at": None}
+    from app.models.utils import utcnow_naive
+    download_available = (
+        key.private_key_pem is not None
+        and (key.download_expires_at is None or utcnow_naive() <= key.download_expires_at)
+    )
     return {
         "has_key": True,
         "public_key": key.public_key,
         "fingerprint": key.fingerprint,
         "uses_own_key": key.private_key_pem is None,
+        "download_available": download_available,
+        "download_expires_at": key.download_expires_at.isoformat() if key.download_expires_at else None,
+        "downloaded_at": key.downloaded_at.isoformat() if key.downloaded_at else None,
     }
 
 
@@ -215,26 +223,23 @@ async def download_my_ssh_key(
     db: Annotated[AsyncSession, Depends(get_db)],
     current_user: Annotated[User, Depends(get_current_user)],
 ):
-    """Download current user's SSH private key (PEM or PPK) for connecting to assigned servers."""
-    r = await db.execute(
-        select(UserSSHKey)
-        .where(UserSSHKey.user_id == current_user.id)
-        .where(UserSSHKey.private_key_pem.isnot(None))
-        .order_by(UserSSHKey.created_at)
-        .limit(1)
-    )
-    key = r.scalar_one_or_none()
-    if not key or not key.private_key_pem:
-        raise HTTPException(status_code=404, detail="No SSH key. Generate one in Profile → Key, or upload your public key.")
+    """Download current user's SSH private key (PEM or PPK). Available for 48 hours after generation."""
+    key, private_pem = await user_key_service.get_decrypted_private_key(db, str(current_user.id))
+    if not key or not private_pem:
+        raise HTTPException(
+            status_code=404,
+            detail="No downloadable private key. The download window (48 hours) may have expired. Regenerate a new key to get a fresh download window.",
+        )
+    await user_key_service.mark_downloaded(db, key)
     if format in ("pem", "pk"):
         return PlainTextResponse(
-            key.private_key_pem,
+            private_pem,
             media_type="application/x-pem-file",
             headers={"Content-Disposition": f'attachment; filename="{user_key_service.USER_KEY_DOWNLOAD_FILENAME_PEM}"'},
         )
     if format == "ppk":
         from app.services.platform_key_service import _pem_to_ppk
-        content = _pem_to_ppk(key.private_key_pem, comment=current_user.username)
+        content = _pem_to_ppk(private_pem, comment=current_user.username)
         return PlainTextResponse(
             content,
             media_type="application/x-ppk",

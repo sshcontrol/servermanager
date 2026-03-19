@@ -26,12 +26,13 @@ SSHCONTROL provides server access management, SSH key management, and user admin
 - You retain ownership of all data you upload to the Service.
 
 6. SSH KEY SECURITY AND USER RESPONSIBILITY
-- All SSH keys managed through the Service are encrypted and are never stored in plaintext on our servers.
-- SSHCONTROL operates on a zero-knowledge security model; we cannot access, view, or recover your private keys.
-- In the event of a lost or misplaced SSH key, recovery through the Service is not possible.
-- You are solely responsible for maintaining secure backups of your SSH keys.
-- SSHCONTROL shall not be held liable for any loss of access resulting from lost or unrecoverable keys.
-- This zero-knowledge architecture is by design to ensure maximum security for your infrastructure.
+- All SSH private keys managed through the Service are encrypted at rest using AES encryption and are never stored in plaintext in our database.
+- When the Service generates an SSH key pair on your behalf, the encrypted private key is available for download for a limited time window (48 hours from generation).
+- After the download window expires, the private key is permanently deleted from our systems and cannot be recovered by anyone, including SSHCONTROL staff.
+- You are solely responsible for downloading, securely storing, and backing up your SSH private keys within the download window.
+- If you lose your private key after the download window has expired, you must regenerate a new key pair through the Service. The old key will be revoked and a new one synced to your assigned servers.
+- SSHCONTROL shall not be held liable for any loss of access resulting from failure to download or back up SSH keys within the provided time window.
+- Public keys remain stored in the Service for as long as needed to manage server access.
 
 7. ACCEPTABLE USE
 You agree not to:

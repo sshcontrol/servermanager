@@ -29,7 +29,7 @@ const faqs: FAQItem[] = [
   { q: "Is there a free plan?", a: "Yes! Our free plan lets you manage up to 3 users and 5 servers at no cost. You can upgrade anytime as your infrastructure grows." },
   { q: "What Linux distributions are supported?", a: "SSHCONTROL supports all major Linux distributions including Ubuntu, Debian, CentOS, RHEL, AlmaLinux, Rocky Linux, and more." },
   { q: "How secure is SSHCONTROL?", a: "Security is at our core. We use end-to-end encryption, two-factor authentication, IP whitelisting, and full audit logging. Your SSH keys never leave your servers." },
-  { q: "Does SSHCONTROL store my SSH private keys?", a: "No. SSHCONTROL operates on a zero-knowledge security model. All SSH keys are encrypted and we never store private keys in plaintext on our servers. If a key is lost, it cannot be recovered — not even by our team. You are solely responsible for keeping secure backups of your keys." },
+  { q: "Does SSHCONTROL store my SSH private keys?", a: "All SSH private keys are encrypted at rest using AES encryption and are never stored in plaintext. When the platform generates a key for you, the encrypted private key is available for download for 48 hours, after which it is permanently deleted from our systems. We strongly recommend downloading and securely backing up your key immediately. Lost keys cannot be recovered after the download window expires." },
   { q: "Can I enforce SSH Two-Factor Authentication?", a: "Yes. You can enable 2FA for all SSH sessions across your infrastructure with one click, blocking 99.9% of automated attacks." },
   { q: "Do I need to install software on my servers?", a: "Yes, a lightweight agent is installed on each server you want to manage. It communicates via outbound HTTPS and has zero external dependencies." },
 ];
@@ -672,15 +672,15 @@ export default function Landing() {
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="m9 12 2 2 4-4"/></svg>
               </div>
               <div className="land-security-notice-content">
-                <h3>Zero-Knowledge Key Security</h3>
+                <h3>SSH Key Security</h3>
                 <p>
-                  SSHCONTROL operates on a <strong>zero-knowledge security model</strong>. All SSH keys are encrypted end-to-end, and we <strong>never store your private keys in plaintext</strong> on our servers. This means that in the event of a lost key, recovery is not possible — not even by our team. Users are solely responsible for securely backing up and safeguarding their own SSH access keys. This architecture ensures that your servers remain protected even in the unlikely event of a platform breach.
+                  Your security is our top priority. All SSH private keys are <strong>encrypted at rest using AES encryption</strong> and are <strong>never stored in plaintext</strong> in our database. When the platform generates a key pair for you, the private key is available for download for a limited time window (48 hours), after which it is <strong>permanently deleted</strong> from our systems. We strongly recommend downloading and backing up your key immediately after generation. Lost keys cannot be recovered after the download window expires.
                 </p>
                 <div className="land-security-notice-highlights">
-                  <span>Private keys are never stored in plaintext</span>
+                  <span>AES encryption at rest</span>
+                  <span>Private keys auto-deleted after 48 hours</span>
+                  <span>Download and back up your key immediately</span>
                   <span>Lost keys cannot be recovered</span>
-                  <span>Users must maintain their own backups</span>
-                  <span>Zero-knowledge architecture by design</span>
                 </div>
               </div>
             </div>
