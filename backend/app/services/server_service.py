@@ -414,7 +414,7 @@ async def get_authorized_keys_content(db: AsyncSession, server_id: str) -> str:
         pk = await get_tenant_owner_public_key(db, tenant_id)
     if not pk:
         return ""
-    opts = "no-port-forwarding,no-X11-forwarding,no-agent-forwarding "
+    opts = "no-X11-forwarding,no-agent-forwarding "
     return opts + pk + "\n"
 
 
@@ -461,7 +461,7 @@ async def get_users_keys_for_server(db: AsyncSession, server_id: str) -> list[di
     )
     seen_user: set[str] = set()
     # Options must be comma-separated with NO spaces; space before key type causes sshd to reject
-    opts = "no-port-forwarding,no-X11-forwarding,no-agent-forwarding"
+    opts = "no-X11-forwarding,no-agent-forwarding"
     result: list[dict] = []
     for user, ssh_key in r.all():
         if not ssh_key or not ssh_key.public_key or user.id in seen_user:
