@@ -6,7 +6,7 @@ from typing import Annotated
 
 from urllib.parse import urlencode
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import PlainTextResponse, RedirectResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -430,3 +430,73 @@ async def accept_invitation(
         "access_token": access,
         "refresh_token": refresh,
     }
+
+
+# ─── Contact form (public) ───────────────────────────────────────────────────
+
+from app.core.rate_limit import RateLimiter
+from app.core.request_utils import get_client_ip
+from app.services.recaptcha_service import verify_recaptcha
+
+_contact_limiter = RateLimiter(max_requests=5, window_seconds=300)
+
+CONTACT_EMAIL = "info@sshcontrol.com"
+
+
+class ContactRequest(_BM):
+    full_name: str = _F(..., min_length=2, max_length=100)
+    email: _ES
+    company: str = _F("", max_length=100)
+    subject: str = _F(..., min_length=3, max_length=200)
+    message: str = _F(..., min_length=10, max_length=5000)
+    recaptcha_token: str = _F("", max_length=4096)
+
+
+@router.post("/contact")
+async def submit_contact_form(
+    request: Request,
+    data: ContactRequest,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Public contact form. Sends message to info@sshcontrol.com via SendGrid."""
+    from fastapi import Request as _Req  # noqa: F811
+
+    _contact_limiter.check(request)
+
+    result = await db.execute(select(PlatformSettings).where(PlatformSettings.id == "1"))
+    cfg = result.scalar_one_or_none()
+    recaptcha_secret = getattr(cfg, "recaptcha_secret_key", "") if cfg else ""
+    if recaptcha_secret:
+        if not data.recaptcha_token:
+            raise HTTPException(status_code=400, detail="Please complete the captcha verification")
+        client_ip = get_client_ip(request)
+        if not verify_recaptcha(data.recaptcha_token, recaptcha_secret, client_ip):
+            raise HTTPException(status_code=400, detail="Captcha verification failed. Please try again.")
+
+    company_line = f"<p><strong>Company:</strong> {data.company}</p>" if data.company.strip() else ""
+    html = (
+        '<div style="font-family:sans-serif;max-width:600px;margin:0 auto;padding:30px;">'
+        '<h2 style="color:#2dd4bf;margin-bottom:20px;">New Contact Form Submission</h2>'
+        '<table style="width:100%;border-collapse:collapse;">'
+        f'<tr><td style="padding:8px 12px;font-weight:600;color:#94a3b8;width:120px;">Name</td><td style="padding:8px 12px;">{data.full_name}</td></tr>'
+        f'<tr><td style="padding:8px 12px;font-weight:600;color:#94a3b8;">Email</td><td style="padding:8px 12px;"><a href="mailto:{data.email}">{data.email}</a></td></tr>'
+        + (f'<tr><td style="padding:8px 12px;font-weight:600;color:#94a3b8;">Company</td><td style="padding:8px 12px;">{data.company}</td></tr>' if data.company.strip() else '')
+        + f'<tr><td style="padding:8px 12px;font-weight:600;color:#94a3b8;">Subject</td><td style="padding:8px 12px;">{data.subject}</td></tr>'
+        '</table>'
+        '<hr style="border:none;border-top:1px solid #334155;margin:20px 0;">'
+        f'<div style="white-space:pre-wrap;line-height:1.7;color:#e2e8f0;">{data.message}</div>'
+        '<hr style="border:none;border-top:1px solid #334155;margin:20px 0;">'
+        f'<p style="font-size:0.85em;color:#64748b;">Sent from the SSHCONTROL contact form · IP: {get_client_ip(request)}</p>'
+        '</div>'
+    )
+
+    from app.services.email_service import _send_email
+    sent = await _send_email(
+        db,
+        to_email=CONTACT_EMAIL,
+        subject=f"[Contact] {data.subject}",
+        html_content=html,
+    )
+    if not sent:
+        raise HTTPException(status_code=500, detail="Failed to send message. Please try emailing us directly at info@sshcontrol.com.")
+    return {"message": "Your message has been sent successfully. We'll get back to you within 24 hours."}

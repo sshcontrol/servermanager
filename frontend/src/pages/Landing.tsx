@@ -520,6 +520,158 @@ function AuthModal({ defaultTab, onClose }: { defaultTab: "signin" | "signup"; o
   );
 }
 
+/* ─── Contact Modal ─── */
+function ContactModal({ onClose, recaptchaSiteKey }: { onClose: () => void; recaptchaSiteKey: string | null }) {
+  const [fullName, setFullName] = useState("");
+  const [email, setEmail] = useState("");
+  const [company, setCompany] = useState("");
+  const [subject, setSubject] = useState("");
+  const [message, setMessage] = useState("");
+  const [sending, setSending] = useState(false);
+  const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
+  const recaptchaRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!recaptchaSiteKey || !recaptchaRef.current) return;
+    const siteKey = recaptchaSiteKey;
+    const container = recaptchaRef.current;
+    const renderWidget = () => {
+      if (typeof (window as unknown as { grecaptcha?: { render: (c: HTMLElement, p: { sitekey: string; theme?: string }) => number } }).grecaptcha !== "undefined" && container) {
+        try {
+          (window as unknown as { grecaptcha: { render: (c: HTMLElement, p: { sitekey: string; theme?: string }) => number } }).grecaptcha.render(container, { sitekey: siteKey, theme: "dark" });
+        } catch { /* already rendered */ }
+      }
+    };
+    if (typeof (window as unknown as { grecaptcha?: unknown }).grecaptcha !== "undefined") {
+      renderWidget();
+      return;
+    }
+    const cbName = "___recaptchaContactCb";
+    (window as unknown as Record<string, unknown>)[cbName] = renderWidget;
+    const script = document.createElement("script");
+    script.src = `https://www.google.com/recaptcha/api.js?onload=${cbName}&render=explicit`;
+    script.async = true;
+    document.head.appendChild(script);
+    return () => { delete (window as unknown as Record<string, unknown>)[cbName]; };
+  }, [recaptchaSiteKey]);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError("");
+    if (fullName.trim().length < 2) { setError("Please enter your full name"); return; }
+    if (!email.trim() || !email.includes("@")) { setError("Please enter a valid email address"); return; }
+    if (subject.trim().length < 3) { setError("Please enter a subject"); return; }
+    if (message.trim().length < 10) { setError("Please enter a message (at least 10 characters)"); return; }
+
+    let recaptchaToken = "";
+    if (recaptchaSiteKey && (window as unknown as { grecaptcha?: { getResponse: () => string } }).grecaptcha) {
+      recaptchaToken = (window as unknown as { grecaptcha: { getResponse: () => string } }).grecaptcha.getResponse();
+      if (!recaptchaToken) {
+        setError("Please complete the captcha verification");
+        return;
+      }
+    }
+
+    setSending(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/public/contact`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ full_name: fullName, email, company, subject, message, recaptcha_token: recaptchaToken }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || "Failed to send message");
+      setSuccess(data.message || "Message sent successfully!");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to send message");
+      if (recaptchaSiteKey && (window as unknown as { grecaptcha?: { reset: () => void } }).grecaptcha) {
+        (window as unknown as { grecaptcha: { reset: () => void } }).grecaptcha.reset();
+      }
+    } finally {
+      setSending(false);
+    }
+  };
+
+  return (
+    <div className="contact-overlay" onClick={onClose}>
+      <div className="contact-modal" onClick={e => e.stopPropagation()}>
+        <button className="contact-close" onClick={onClose} aria-label="Close">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+
+        <div className="contact-modal-header">
+          <div className="contact-modal-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
+          </div>
+          <h3>Send Us a Message</h3>
+          <p>Fill out the form below and we'll get back to you within 24 hours.</p>
+        </div>
+
+        {success ? (
+          <div className="contact-success">
+            <svg width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="#2dd4bf" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+            <p>{success}</p>
+            <button className="contact-submit" onClick={onClose}>Close</button>
+          </div>
+        ) : (
+          <form onSubmit={handleSubmit} className="contact-form">
+            <div className="contact-row">
+              <div className="contact-field">
+                <label htmlFor="cf-name">Full Name <span className="contact-required">*</span></label>
+                <div className="contact-input-wrap">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+                  <input id="cf-name" type="text" value={fullName} onChange={e => setFullName(e.target.value)} placeholder="John Doe" required />
+                </div>
+              </div>
+              <div className="contact-field">
+                <label htmlFor="cf-email">Email Address <span className="contact-required">*</span></label>
+                <div className="contact-input-wrap">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
+                  <input id="cf-email" type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="you@company.com" required />
+                </div>
+              </div>
+            </div>
+            <div className="contact-row">
+              <div className="contact-field">
+                <label htmlFor="cf-company">Company <span className="contact-optional">(optional)</span></label>
+                <div className="contact-input-wrap">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect width="16" height="20" x="4" y="2" rx="2"/><path d="M9 22v-4h6v4"/><path d="M8 6h.01M16 6h.01M12 6h.01M12 10h.01M12 14h.01M16 10h.01M16 14h.01M8 10h.01M8 14h.01"/></svg>
+                  <input id="cf-company" type="text" value={company} onChange={e => setCompany(e.target.value)} placeholder="Acme Inc." />
+                </div>
+              </div>
+              <div className="contact-field">
+                <label htmlFor="cf-subject">Subject <span className="contact-required">*</span></label>
+                <div className="contact-input-wrap">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                  <input id="cf-subject" type="text" value={subject} onChange={e => setSubject(e.target.value)} placeholder="General inquiry" required />
+                </div>
+              </div>
+            </div>
+            <div className="contact-field">
+              <label htmlFor="cf-message">Message <span className="contact-required">*</span></label>
+              <textarea id="cf-message" value={message} onChange={e => setMessage(e.target.value)} placeholder="Tell us how we can help..." rows={5} required />
+            </div>
+            {recaptchaSiteKey && (
+              <div className="contact-field">
+                <div ref={recaptchaRef} style={{ minHeight: 78, display: "flex", alignItems: "center", justifyContent: "flex-start" }} />
+              </div>
+            )}
+            {error && <p className="contact-error">{error}</p>}
+            <button type="submit" className="contact-submit" disabled={sending}>
+              {sending ? (
+                <><svg className="contact-spinner" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg> Sending...</>
+              ) : (
+                <><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg> Send Message</>
+              )}
+            </button>
+          </form>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function Landing() {
   const { user, loading } = useAuth();
   const [plans, setPlans] = useState<Plan[]>([]);
@@ -527,9 +679,18 @@ export default function Landing() {
   const [mobileMenu, setMobileMenu] = useState(false);
   const [navSolid, setNavSolid] = useState(false);
   const [authModal, setAuthModal] = useState<"signin" | "signup" | null>(null);
+  const [contactModal, setContactModal] = useState(false);
+  const [recaptchaSiteKey, setRecaptchaSiteKey] = useState<string | null>(null);
 
   useEffect(() => {
     fetch(`${API_BASE}/api/public/plans`).then(r => r.json()).then(setPlans).catch(() => {});
+    fetch(`${API_BASE}/api/public/platform-settings`)
+      .then(r => r.ok ? r.json() : {})
+      .then((s: { recaptcha_site_key?: string }) => {
+        const key = s?.recaptcha_site_key?.trim();
+        if (key) setRecaptchaSiteKey(key);
+      })
+      .catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -539,13 +700,13 @@ export default function Landing() {
   }, []);
 
   useEffect(() => {
-    if (authModal) {
+    if (authModal || contactModal) {
       document.body.style.overflow = "hidden";
     } else {
       document.body.style.overflow = "";
     }
     return () => { document.body.style.overflow = ""; };
-  }, [authModal]);
+  }, [authModal, contactModal]);
 
   if (loading) return <div className="app-loading"><LogoSpinner /></div>;
   if (user) return null;
@@ -767,6 +928,10 @@ export default function Landing() {
                   <a href="https://sshcontrol.com" target="_blank" rel="noopener noreferrer">sshcontrol.com</a>
                 </div>
               </div>
+              <button className="land-contact-btn" onClick={() => setContactModal(true)}>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+                Quick Contact
+              </button>
               <p className="land-contact-note">We typically respond within 24 hours on business days.</p>
             </div>
           </Reveal>
@@ -820,6 +985,9 @@ export default function Landing() {
 
       {/* ─── Auth Modal ─── */}
       {authModal && <AuthModal defaultTab={authModal} onClose={() => setAuthModal(null)} />}
+
+      {/* ─── Contact Modal ─── */}
+      {contactModal && <ContactModal onClose={() => setContactModal(false)} recaptchaSiteKey={recaptchaSiteKey} />}
     </div>
   );
 }
